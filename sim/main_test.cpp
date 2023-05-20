@@ -9,8 +9,8 @@
 #include "Vtop_test.h"
 
 // screen dimensions
-const int H_RES = 640;
-const int V_RES = 480;
+const int H_RES = 1280;
+const int V_RES = 720;
 
 typedef struct Pixel {  // for SDL texture
     uint8_t a;  // transparency

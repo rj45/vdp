@@ -6,7 +6,7 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-module top_test #(parameter CORDW=10) (  // coordinate width
+module top_test #(parameter CORDW=11) (  // coordinate width
     input  wire logic clk_pix,             // pixel clock
     input  wire logic sim_rst,             // sim reset
     output      logic [CORDW-1:0] sdl_sx,  // horizontal SDL position

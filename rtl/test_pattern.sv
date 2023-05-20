@@ -6,7 +6,7 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-module test_pattern #(parameter CORDW=10) (  // coordinate width
+module test_pattern #(parameter CORDW=11) (  // coordinate width
     input  wire logic clk_pix,             // pixel clock
     input  wire logic rst_pix,             // pixel reset
     output      logic [CORDW-1:0] sx,  // horizontal position
@@ -33,10 +33,10 @@ module test_pattern #(parameter CORDW=10) (  // coordinate width
     // paint colour: based on screen position
     logic [7:0] paint_r, paint_g, paint_b;
     always_comb begin
-        if (sx < 256 && sy < 256) begin  // colour square in top-left 256x256 pixels
-            paint_r = sx[7:0];
-            paint_g = sy[7:0];
-            paint_b = ~sy[7:0];
+        if (sx < 512 && sy < 512) begin  // colour square in top-left 256x256 pixels
+            paint_r = sx[8:1];
+            paint_g = sy[8:1];
+            paint_b = ~sy[8:1];
         end else begin  // background colour
             paint_r = 8'h00;
             paint_g = 8'h11;
