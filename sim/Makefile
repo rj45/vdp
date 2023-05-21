@@ -12,6 +12,7 @@ test: test.exe
 	make -C ./obj_dir -f Vtop_$<
 
 %.mk: top_%.sv
+	cp ../rtl/*.hex .
 	verilator ${VFLAGS} -I../rtl \
 		-cc $< --exe main_$(basename $@).cpp -o $(basename $@) \
 		-CFLAGS "${SDL_CFLAGS}" -LDFLAGS "${SDL_LDFLAGS}"

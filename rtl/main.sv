@@ -1,12 +1,9 @@
-// Project F: FPGA Graphics - Test Pattern
-// (C)2023 Will Green, open source hardware released under the MIT License
-// Learn more at https://projectf.io/posts/fpga-graphics/
-// Modified by (C) 2023 Ryan "rj45" Sanche, MIT License
+// (C) 2023 Ryan "rj45" Sanche, MIT License
 
 `default_nettype none
 `timescale 1ns / 1ps
 
-module test_pattern #(parameter CORDW=11) (  // coordinate width
+module main #(parameter CORDW=11) (  // coordinate width
     input  wire logic clk_pix,             // pixel clock
     input  wire logic rst_pix,             // pixel reset
     output      logic [CORDW-1:0] sx,  // horizontal position
@@ -30,18 +27,22 @@ module test_pattern #(parameter CORDW=11) (  // coordinate width
         .de
     );
 
+    logic [7:0] colour;
+    logic [23:0] rgb;
+
+    palette_bram #("testpal.hex") palbram_inst (
+        .clk_pix,
+        .colour,
+        .rgb
+    );
+
     // paint colour: based on screen position
     logic [7:0] paint_r, paint_g, paint_b;
     always_comb begin
-        if (sx < 512 && sy < 512) begin  // colour square in top-left 256x256 pixels
-            paint_r = sx[8:1];
-            paint_g = sy[8:1];
-            paint_b = ~sy[8:1];
-        end else begin  // background colour
-            paint_r = 8'h00;
-            paint_g = 8'h11;
-            paint_b = 8'h33;
-        end
+        colour = sx[7:0];
+        paint_b = rgb[7:0];
+        paint_g = rgb[15:8];
+        paint_r = rgb[23:16];
     end
 
     // display colour: paint colour but black in blanking interval

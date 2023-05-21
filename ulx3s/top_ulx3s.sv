@@ -40,7 +40,7 @@ module top_ulx3s (
         .gpdi_dp, .gpdi_dn
     );
 
-    test_pattern test_inst (
+    main test_inst (
         .clk_pix,
         .rst_pix,
         .sx(),
