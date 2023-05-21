@@ -36,23 +36,48 @@ module main #(parameter CORDW=11) (  // coordinate width
         .rgb
     );
 
-    logic [10:0] addr_draw;
-    logic [7:0] colour_draw;
+    logic [6:0] lb_addr_draw;
+    logic [127:0] lb_colour_draw;
 
-    linebuffer_bram lbbram_inst (
+    double_buffer db_inst (
         .clk_pix,
-        .addr_pix(sx),
-        .colour_pix,
+        .clk_draw(clk_pix), // for now
 
-        .clk_draw(clk_pix),
-        .addr_draw,
-        .we_draw(1'b1),
-        .colour_draw
+        .buffsel_pix(sy[0]),
+        .buffsel_draw(sy[0]), // for now
+
+        .addr_on_pix(sx),
+        .colour_on_pix(colour_pix),
+
+        .addr_on_draw(7'd0), // for now
+        .we_on_draw(1'd0), // for now
+        .colour_on_draw(128'd0), // for now
+
+        .addr_off_draw(lb_addr_draw),
+        .we_off_draw(16'hffff),
+        .colour_off_draw(lb_colour_draw)
     );
 
     always_comb begin
-        addr_draw = sx+1;
-        colour_draw = sx[8] ? ~sx[7:0] : sx[7:0];
+        lb_addr_draw = sx[10:4];
+        lb_colour_draw = {
+            sx[7:0] + sy[7:0] + 8'hf,
+            sx[7:0] + sy[7:0] + 8'he,
+            sx[7:0] + sy[7:0] + 8'hd,
+            sx[7:0] + sy[7:0] + 8'hc,
+            sx[7:0] + sy[7:0] + 8'hb,
+            sx[7:0] + sy[7:0] + 8'ha,
+            sx[7:0] + sy[7:0] + 8'h9,
+            sx[7:0] + sy[7:0] + 8'h8,
+            sx[7:0] + sy[7:0] + 8'h7,
+            sx[7:0] + sy[7:0] + 8'h6,
+            sx[7:0] + sy[7:0] + 8'h5,
+            sx[7:0] + sy[7:0] + 8'h4,
+            sx[7:0] + sy[7:0] + 8'h3,
+            sx[7:0] + sy[7:0] + 8'h2,
+            sx[7:0] + sy[7:0] + 8'h1,
+            sx[7:0] + sy[7:0] + 8'h0
+        };
     end
 
     // do the palette lookup
