@@ -27,19 +27,37 @@ module main #(parameter CORDW=11) (  // coordinate width
         .de
     );
 
-    logic [7:0] colour;
+    logic [7:0] colour_pix;
     logic [23:0] rgb;
 
     palette_bram #("testpal.hex") palbram_inst (
         .clk_pix,
-        .colour,
+        .colour_pix,
         .rgb
     );
 
-    // paint colour: based on screen position
+    logic [10:0] addr_draw;
+    logic [7:0] colour_draw;
+
+    linebuffer_bram lbbram_inst (
+        .clk_pix,
+        .addr_pix(sx),
+        .colour_pix,
+
+        .clk_draw(clk_pix),
+        .addr_draw,
+        .we_draw(1'b1),
+        .colour_draw
+    );
+
+    always_comb begin
+        addr_draw = sx+1;
+        colour_draw = sx[8] ? ~sx[7:0] : sx[7:0];
+    end
+
+    // do the palette lookup
     logic [7:0] paint_r, paint_g, paint_b;
     always_comb begin
-        colour = sx[7:0];
         paint_b = rgb[7:0];
         paint_g = rgb[15:8];
         paint_r = rgb[23:16];

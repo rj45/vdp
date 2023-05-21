@@ -5,7 +5,7 @@
 
 module  palette_bram #(parameter FILENAME="") (
   input  wire logic        clk_pix,
-  input  wire logic [7:0]  colour,
+  input  wire logic [7:0]  colour_pix,
   output      logic [23:0] rgb
 );
 
@@ -19,6 +19,6 @@ module  palette_bram #(parameter FILENAME="") (
 
   always @(posedge clk_pix)
   begin
-	rgb <= rom[colour];
+	rgb <= rom[colour_pix];
   end
 endmodule
