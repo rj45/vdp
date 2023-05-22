@@ -7,13 +7,13 @@
 `timescale 1ns / 1ps
 
 module vga #(parameter CORDW=11) (
-    input  wire logic clk_pix,   // pixel clock
-    input  wire logic rst_pix,   // reset in pixel clock domain
-    output      logic [CORDW-1:0] sx,  // horizontal screen position
-    output      logic [CORDW-1:0] sy,  // vertical screen position
-    output      logic hsync,     // horizontal sync
-    output      logic vsync,     // vertical sync
-    output      logic de         // data enable (low in blanking interval)
+    input  logic clk_pix,   // pixel clock
+    input  logic rst_pix,   // reset in pixel clock domain
+    output logic [CORDW-1:0] sx,  // horizontal screen position
+    output logic [CORDW-1:0] sy,  // vertical screen position
+    output logic hsync,     // horizontal sync
+    output logic vsync,     // vertical sync
+    output logic de         // data enable (low in blanking interval)
     );
 
     // horizontal timings (720p)

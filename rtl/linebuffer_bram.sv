@@ -5,15 +5,15 @@
 
 module  linebuffer_bram (
     // read port
-    input  wire logic         clk_pix,
-    input  wire logic [6:0]   addr_pix,
-    output      logic [127:0] colour_pix,
+    input  logic         clk_pix,
+    input  logic [6:0]   addr_pix,
+    output logic [127:0] colour_pix,
 
     // write port
-    input wire logic          clk_draw,
-    input wire logic [6:0]    addr_draw,
-    input wire logic [15:0]   we_draw,
-    input wire logic [127:0]  colour_draw
+    input logic          clk_draw,
+    input logic [6:0]    addr_draw,
+    input logic [15:0]   we_draw,
+    input logic [127:0]  colour_draw
 );
 
     reg [127:0] mem[0:127];

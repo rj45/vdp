@@ -13,28 +13,28 @@
 
 module double_buffer (
     // read port clock
-    input  wire logic         clk_pix,
+    input  logic         clk_pix,
 
     // write port clock
-    input  wire logic         clk_draw,
+    input  logic         clk_draw,
 
     // buffer select for each clock domain
-    input  wire logic         buffsel_pix,
-    input  wire logic         buffsel_draw,
+    input  logic         buffsel_pix,
+    input  logic         buffsel_draw,
 
     // on-screen buffer read port
-    input  wire logic [10:0]  addr_on_pix,
-    output      logic [7:0]   colour_on_pix,
+    input  logic [10:0]  addr_on_pix,
+    output logic [7:0]   colour_on_pix,
 
     // on-screen buffer write port (for clearing)
-    input  wire logic [6:0]   addr_on_draw,
-    input  wire logic         we_on_draw,
-    input  wire logic [127:0] colour_on_draw,
+    input  logic [6:0]   addr_on_draw,
+    input  logic         we_on_draw,
+    input  logic [127:0] colour_on_draw,
 
     // off-screen buffer write port
-    input  wire logic [6:0]   addr_off_draw,
-    input  wire logic [15:0]  we_off_draw,
-    input  wire logic [127:0] colour_off_draw
+    input  logic [6:0]   addr_off_draw,
+    input  logic [15:0]  we_off_draw,
+    input  logic [127:0] colour_off_draw
 );
 
     logic [6:0]   lb0_addr_pix;

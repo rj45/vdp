@@ -4,9 +4,9 @@
 `timescale 1ns / 1ps
 
 module  palette_bram #(parameter FILENAME="") (
-  input  wire logic        clk_pix,
-  input  wire logic [7:0]  colour_pix,
-  output      logic [23:0] rgb
+  input  logic        clk_pix,
+  input  logic [7:0]  colour_pix,
+  output logic [23:0] rgb
 );
 
   reg [23:0] rom[0:255];

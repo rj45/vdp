@@ -4,16 +4,16 @@
 `timescale 1ns / 1ps
 
 module main #(parameter CORDW=11) (  // coordinate width
-    input  wire logic clk_pix,             // pixel clock
-    input  wire logic rst_pix,             // pixel reset
-    output      logic [CORDW-1:0] sx,  // horizontal position
-    output      logic [CORDW-1:0] sy,  // vertical position
-    output      logic de,              // data enable (low in blanking interval)
-    output      logic vsync,           // vertical sync
-    output      logic hsync,           // horizontal sync
-    output      logic [7:0] r,         // 8-bit red
-    output      logic [7:0] g,         // 8-bit green
-    output      logic [7:0] b          // 8-bit blue
+    input  logic clk_pix,             // pixel clock
+    input  logic rst_pix,             // pixel reset
+    output logic [CORDW-1:0] sx,  // horizontal position
+    output logic [CORDW-1:0] sy,  // vertical position
+    output logic de,              // data enable (low in blanking interval)
+    output logic vsync,           // vertical sync
+    output logic hsync,           // horizontal sync
+    output logic [7:0] r,         // 8-bit red
+    output logic [7:0] g,         // 8-bit green
+    output logic [7:0] b          // 8-bit blue
     );
 
     // display sync signals and coordinates
