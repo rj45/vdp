@@ -1,6 +1,6 @@
 VERILOG = ulx3s/pll.v rtl/vga.sv rtl/hdmi.v rtl/palette_bram.sv \
-          rtl/linebuffer_bram.sv rtl/double_buffer.sv \
-		  rtl/main.sv ulx3s/top_ulx3s.sv
+          rtl/linebuffer_bram.sv rtl/double_buffer.sv rtl/pixel_quadrupler.sv \
+		  rtl/shift_aligner.sv rtl/main.sv ulx3s/top_ulx3s.sv
 
 TESTS = bin/pixel_quadrupler_tb
 

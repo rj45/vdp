@@ -10,8 +10,9 @@ module shift_aligner (
     input  logic [255:0] unaligned_pixels,      // 32 unaligned pixels
     input  logic [31:0]  unaligned_valid_mask,  // 32 valid mask bits
     input  logic [3:0]   alignment_shift,       // amount to shift by
+
     output logic [127:0] aligned_pixels,        // 16 aligned pixels
-    output logic [15:0]  aligned_valid_mask,    // 16 bit valid mask
+    output logic [15:0]  aligned_valid_mask     // 16 bit valid mask
 );
 
     always_ff @(posedge clk_draw) begin
@@ -20,7 +21,7 @@ module shift_aligner (
             aligned_valid_mask <= 16'h0;
         end else begin
             aligned_pixels <= unaligned_pixels[alignment_shift*8 +: 128];
-            aligned_valid_mask <= unaligned_valid_mask[alignment_shift +: 16];
+            aligned_valid_mask <= unaligned_valid_mask[{1'b0, alignment_shift} +: 16];
         end
     end
 

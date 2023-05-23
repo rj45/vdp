@@ -13,7 +13,9 @@ module vga #(parameter CORDW=11) (
     output logic [CORDW-1:0] sy,  // vertical screen position
     output logic hsync,     // horizontal sync
     output logic vsync,     // vertical sync
-    output logic de         // data enable (low in blanking interval)
+    output logic de,        // data enable (low in blanking interval)
+    output logic line,      // reached end of line
+    output logic frame      // reached end of frame
     );
 
     // horizontal timings (720p)
@@ -32,6 +34,8 @@ module vga #(parameter CORDW=11) (
         hsync = ~(sx >= HS_STA && sx < HS_END);  // invert: negative polarity
         vsync = ~(sy >= VS_STA && sy < VS_END);  // invert: negative polarity
         de = (sx <= HA_END && sy <= VA_END);
+        line = (sx == LINE);
+        frame = (sx == LINE && sy == SCREEN);
     end
 
     // calculate horizontal and vertical screen position

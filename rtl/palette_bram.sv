@@ -11,14 +11,12 @@ module  palette_bram #(parameter FILENAME="") (
 
   reg [23:0] rom[0:255];
 
-  initial
-  begin
+  initial begin
     if (FILENAME!="")
-		  $readmemh(FILENAME, rom);
+      $readmemh(FILENAME, rom);
   end
 
-  always @(posedge clk_pix)
-  begin
-	rgb <= rom[colour_pix];
+  always @(posedge clk_pix) begin
+    rgb <= rom[colour_pix];
   end
 endmodule

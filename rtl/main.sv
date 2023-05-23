@@ -16,6 +16,9 @@ module main #(parameter CORDW=11) (  // coordinate width
     output logic [7:0] b          // 8-bit blue
     );
 
+    logic line;
+    logic frame;
+
     // display sync signals and coordinates
     vga #(CORDW) vga_inst (
         .clk_pix,
@@ -24,7 +27,9 @@ module main #(parameter CORDW=11) (  // coordinate width
         .sy,
         .hsync,
         .vsync,
-        .de
+        .de,
+        .line,
+        .frame
     );
 
     logic [7:0] colour_pix;
@@ -38,6 +43,7 @@ module main #(parameter CORDW=11) (  // coordinate width
 
     logic [6:0] lb_addr_draw;
     logic [127:0] lb_colour_draw;
+    logic [15:0] lb_mask_draw;
 
     double_buffer db_inst (
         .clk_pix,
@@ -54,30 +60,62 @@ module main #(parameter CORDW=11) (  // coordinate width
         .colour_on_draw(128'd0), // for now
 
         .addr_off_draw(lb_addr_draw),
-        .we_off_draw(16'hffff),
+        .we_off_draw(lb_mask_draw),
         .colour_off_draw(lb_colour_draw)
     );
 
-    always_comb begin
-        lb_addr_draw = sx[10:4];
-        lb_colour_draw = {
-            sx[7:0] + sy[7:0] + 8'hf,
-            sx[7:0] + sy[7:0] + 8'he,
-            sx[7:0] + sy[7:0] + 8'hd,
-            sx[7:0] + sy[7:0] + 8'hc,
-            sx[7:0] + sy[7:0] + 8'hb,
-            sx[7:0] + sy[7:0] + 8'ha,
-            sx[7:0] + sy[7:0] + 8'h9,
-            sx[7:0] + sy[7:0] + 8'h8,
-            sx[7:0] + sy[7:0] + 8'h7,
-            sx[7:0] + sy[7:0] + 8'h6,
-            sx[7:0] + sy[7:0] + 8'h5,
-            sx[7:0] + sy[7:0] + 8'h4,
-            sx[7:0] + sy[7:0] + 8'h3,
-            sx[7:0] + sy[7:0] + 8'h2,
-            sx[7:0] + sy[7:0] + 8'h1,
-            sx[7:0] + sy[7:0] + 8'h0
-        };
+    logic [31:0]  tile_pixels;
+    logic [3:0]   tile_valid_mask = 4'b1111;
+    logic [10:0]  tile_x;
+    logic [255:0] unaligned_pixels;
+    logic [31:0]  unaligned_valid_mask;
+    logic [3:0]   alignment_shift;
+
+    pixel_quadrupler quad_inst (
+        .clk_draw(clk_pix),
+        .rst_draw(line),
+
+        .tile_pixels,
+        .tile_valid_mask,
+        .tile_x,
+
+        .lb_addr(lb_addr_draw),
+        .unaligned_pixels,
+        .unaligned_valid_mask,
+        .alignment_shift
+    );
+
+    shift_aligner shifter_inst (
+        .clk_draw(clk_pix),
+        .rst_draw(line),
+
+        .unaligned_pixels,
+        .unaligned_valid_mask,
+        .alignment_shift,
+
+        .aligned_pixels(lb_colour_draw),
+        .aligned_valid_mask(lb_mask_draw)
+    );
+
+    logic [10:0] frame_counter;
+    logic [7:0] tile_counter;
+
+    always_ff @(posedge clk_pix) begin
+        if (frame) frame_counter <= frame_counter + 1;
+
+        if (line) begin
+            tile_x <= sy + frame_counter;
+            tile_counter <= 8'h0;
+        end else begin
+            tile_x <= tile_x + 16;
+            tile_counter <= tile_counter + 4;
+            tile_pixels <= {
+                tile_counter | 8'h3,
+                tile_counter | 8'h2,
+                tile_counter | 8'h1,
+                tile_counter | 8'h0
+            };
+        end
     end
 
     // do the palette lookup
