@@ -35,7 +35,7 @@ module main #(parameter CORDW=11) (  // coordinate width
     logic [7:0] colour_pix;
     logic [23:0] rgb;
 
-    palette_bram #("testpal.hex") palbram_inst (
+    palette_bram #("palette.hex") palbram_inst (
         .clk_pix,
         .colour_pix,
         .rgb
@@ -66,7 +66,7 @@ module main #(parameter CORDW=11) (  // coordinate width
 
     logic [31:0]  tile_pixels;
     logic [3:0]   tile_valid_mask = 4'b1111;
-    logic [10:0]  tile_x;
+    logic [10:0]  lb_x;
     logic [255:0] unaligned_pixels;
     logic [31:0]  unaligned_valid_mask;
     logic [3:0]   alignment_shift;
@@ -77,7 +77,7 @@ module main #(parameter CORDW=11) (  // coordinate width
 
         .tile_pixels,
         .tile_valid_mask,
-        .tile_x,
+        .lb_x,
 
         .lb_addr(lb_addr_draw),
         .unaligned_pixels,
@@ -97,6 +97,22 @@ module main #(parameter CORDW=11) (  // coordinate width
         .aligned_valid_mask(lb_mask_draw)
     );
 
+
+    logic [4:0]  tile_y;
+    logic [4:0]  tile_x;
+    logic [2:0]  tile_row;
+    logic        tile_col;
+    logic [15:0] tile_data;
+
+    tile_bram #("tiles.hex") tile_inst (
+        .clk_draw(clk_pix),
+        .tile_y,
+        .tile_x,
+        .tile_row,
+        .tile_col,
+        .tile_data
+    );
+
     logic [10:0] frame_counter;
     logic [7:0] tile_counter;
 
@@ -104,17 +120,30 @@ module main #(parameter CORDW=11) (  // coordinate width
         if (frame) frame_counter <= frame_counter + 1;
 
         if (line) begin
-            tile_x <= sy + frame_counter;
+            lb_x <= frame_counter;
+
+            tile_y <= 5'h0;
+            tile_row <= 3'h0;
+            tile_x <= 5'h0;
+            tile_col <= 1'h0;
+            tile_pixels <= 32'h0;
+
             tile_counter <= 8'h0;
         end else begin
-            tile_x <= tile_x + 16;
-            tile_counter <= tile_counter + 4;
+            lb_x <= lb_x + 16;
+
+            tile_y <= sy[9:5]; // repeat each row 4 times
+            tile_row <= sy[4:2];
+            tile_x <= tile_counter[5:1];
+            tile_col <= tile_counter[0];
             tile_pixels <= {
-                tile_counter | 8'h3,
-                tile_counter | 8'h2,
-                tile_counter | 8'h1,
-                tile_counter | 8'h0
+                4'h0, tile_data[15:12],
+                4'h0, tile_data[11:8],
+                4'h0, tile_data[7:4],
+                4'h0, tile_data[3:0]
             };
+
+            tile_counter <= tile_counter + 1;
         end
     end
 

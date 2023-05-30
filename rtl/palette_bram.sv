@@ -3,7 +3,7 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-module  palette_bram #(parameter FILENAME="") (
+module palette_bram #(parameter FILENAME="") (
   input  logic        clk_pix,
   input  logic [7:0]  colour_pix,
   output logic [23:0] rgb
@@ -19,4 +19,5 @@ module  palette_bram #(parameter FILENAME="") (
   always @(posedge clk_pix) begin
     rgb <= rom[colour_pix];
   end
+
 endmodule

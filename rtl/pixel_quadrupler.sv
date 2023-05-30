@@ -15,7 +15,7 @@ module pixel_quadrupler (
 
     input  logic [31:0]  tile_pixels,         // 4 input pixels
     input  logic [3:0]   tile_valid_mask,     // mask indicating which pixels to draw
-    input  logic [10:0]  tile_x,              // x position of left-most pixel in sub-pixels
+    input  logic [10:0]  lb_x,                // x position of left-most pixel in sub-pixels in linebuffer
 
     output logic [6:0]   lb_addr,             // line buffer address
     output logic [255:0] unaligned_pixels,    // pixels prepared to be aligned
@@ -57,10 +57,10 @@ module pixel_quadrupler (
             prev_pixels <= 128'h0;
             prev_valid <= 16'h0;
         end else begin
-            lb_addr <= tile_x[10:4];
+            lb_addr <= lb_x[10:4];
             unaligned_pixels <= {prev_pixels, next_pixels};
             unaligned_valid_mask <= {prev_valid, next_valid};
-            alignment_shift <= tile_x[3:0];
+            alignment_shift <= lb_x[3:0];
 
             prev_pixels <= next_pixels;
             prev_valid <= next_valid;
