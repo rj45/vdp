@@ -40,9 +40,9 @@ module vga #(parameter CORDW=11) (
 
     // calculate horizontal and vertical screen position
     always_ff @(posedge clk_pix) begin
-        if (sx == LINE) begin  // last pixel on line?
+        if (line) begin  // last pixel on line?
             sx <= 0;
-            sy <= (sy == SCREEN) ? 0 : sy + 1;  // last line on screen?
+            sy <= frame ? 0 : sy + 1;  // last line on screen?
         end else begin
             sx <= sx + 1;
         end

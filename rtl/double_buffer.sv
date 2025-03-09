@@ -71,12 +71,19 @@ module double_buffer (
         .colour_draw(lb1_colour_draw)
     );
 
+    // The addr_on_pix needs to be delayed by one cycle because the bram takes a cycle to read
+    logic [10:0]  prev_addr_on_pix;
+
+    always_ff @(posedge clk_draw) begin
+        prev_addr_on_pix <= addr_on_pix;
+    end
+
     // handle the pix side reading
     always_comb begin
         if (buffsel_pix) begin
             lb0_addr_pix = addr_on_pix[10:4];
             lb1_addr_pix = 0;
-            case (addr_on_pix[3:0])
+            case (prev_addr_on_pix[3:0])
                 // 4'h0: colour_on_pix = lb0_colour_pix[7:0];
                 // 4'h1: colour_on_pix = lb0_colour_pix[15:8];
                 // 4'h2: colour_on_pix = lb0_colour_pix[23:16];
@@ -113,7 +120,7 @@ module double_buffer (
         end else begin
             lb1_addr_pix = addr_on_pix[10:4];
             lb0_addr_pix = 0;
-            case (addr_on_pix[3:0])
+            case (prev_addr_on_pix[3:0])
                 4'h0: colour_on_pix = lb1_colour_pix[127:120];
                 4'h1: colour_on_pix = lb1_colour_pix[119:112];
                 4'h2: colour_on_pix = lb1_colour_pix[111:104];

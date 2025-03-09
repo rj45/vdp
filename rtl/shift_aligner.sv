@@ -20,7 +20,9 @@ module shift_aligner (
             aligned_pixels <= 128'h0;
             aligned_valid_mask <= 16'h0;
         end else begin
+            // select 128 bits from the unaligned pixels at the offset alignment_shift*8
             aligned_pixels <= unaligned_pixels[alignment_shift*8 +: 128];
+            // select 16 bits from the unaligned valid mask at the offset alignment_shift
             aligned_valid_mask <= unaligned_valid_mask[{1'b0, alignment_shift} +: 16];
         end
     end

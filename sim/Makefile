@@ -15,7 +15,7 @@ test: test.exe
 	cp ../rtl/*.hex .
 	verilator ${VFLAGS} -I../rtl \
 		-cc $< --exe main_$(basename $@).cpp -o $(basename $@) \
-		-CFLAGS "${SDL_CFLAGS}" -LDFLAGS "${SDL_LDFLAGS}"
+		-CFLAGS "${SDL_CFLAGS} -std=c++17" -LDFLAGS "${SDL_LDFLAGS}"
 
 all: test
 
