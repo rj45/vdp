@@ -75,8 +75,8 @@ module main #(parameter CORDW=11) ( // coordinate width
         end else begin
             d1_lb_x <= d1_lb_x + 16;
 
-            d1_tile_y <= x0_sy[9:5]; // repeat each row 4 times
-            d1_tile_row <= x0_sy[4:2];
+            d1_tile_y <= x0_sy[9:5];
+            d1_tile_row <= x0_sy[4:2]; // tile is 8 rows high, repeat each row 4 times
             d1_tile_x <= d1_tile_counter[5:1];
             d1_tile_col <= d1_tile_counter[0];
 

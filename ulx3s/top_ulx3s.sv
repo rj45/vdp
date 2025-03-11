@@ -6,7 +6,9 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-module top_ulx3s (
+`define SMOLDVI 1
+
+module top_ulx3s  (
     input  wire logic clk_25mhz,           // input clock
 
     // HDMI
@@ -32,15 +34,27 @@ module top_ulx3s (
     logic hsync, vsync, de;
     logic [7:0] r, g, b;
 
-    hdmi hdmi_inst (
-        .clk_pix,
-        .clk_pix5x,
-        .r, .g, .b,
-        .de, .hsync, .vsync,
-        .gpdi_dp, .gpdi_dn
-    );
+`ifdef SMOLDVI
+        smoldvi smoldvi_inst (
+            .clk_pix,
+            .rst_n_pix(~rst_pix),
+            .clk_bit(clk_pix5x),
+            .rst_n_bit(~rst_pix),
+            .r(r[7:1]), .g(g[7:1]), .b(b[7:1]),
+            .den(de), .hsync, .vsync,
+            .dvi_p(gpdi_dp), .dvi_n(gpdi_dn)
+        );
+`else
+        hdmi hdmi_inst (
+            .clk_pix,
+            .clk_pix5x,
+            .r, .g, .b,
+            .de, .hsync, .vsync,
+            .gpdi_dp, .gpdi_dn
+        );
+`endif
 
-    main test_inst (
+    main main_inst (
         .clk_pix,
         .rst_pix,
         .sx(),

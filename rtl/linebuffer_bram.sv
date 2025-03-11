@@ -16,6 +16,8 @@ module  linebuffer_bram (
     input logic [127:0]  colour_draw
 );
 
+    // 4 brams on the ecp5
+    // could actually be 144 bits wide by 512 deep (8192 pixels wide x 9 bits per pixel)
     reg [127:0] mem[0:127];
 
     always @(posedge clk_pix) begin
