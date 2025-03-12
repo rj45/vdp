@@ -4,10 +4,10 @@
 // Gouldian_Finch_256x256_4b.png is public domain, photo by Bernard Spragg
 // I used Gimp to scale, crop and reduce it to 15 colors
 
+use hex;
+use image::{GenericImageView, Pixel};
 use std::fs::File;
 use std::io::Write;
-use image::{GenericImageView, Pixel};
-use hex;
 
 fn main() {
     // Read the PNG file.
@@ -38,7 +38,33 @@ fn main() {
         let color_index = match color_palette.iter().position(|x| *x == pixel_hex) {
             Some(index) => index,
             None => {
+                let channels = rgba.channels();
+                let (r, g, b) = (
+                    (channels[0] >> 1) as i16,
+                    (channels[1] >> 1) as i16,
+                    (channels[2] >> 1) as i16,
+                );
+
+                let co = r.wrapping_sub(b);
+                let tmp = b.wrapping_add(co >> 1);
+                let cg = g.wrapping_sub(tmp);
+                let y = tmp.wrapping_add(cg >> 1);
+
+                let tmp = y.wrapping_sub(cg >> 1);
+                let g2 = cg.wrapping_add(tmp);
+                let b2 = tmp.wrapping_sub(co >> 1);
+                let r2 = b2.wrapping_add(co);
+
+                // Print the pixel values.
+                println!(
+                    "rgb({},{},{}) rgb2({},{},{}) co: {}, cg: {}, y: {}",
+                    r, g, b, r2, g2, b2, co, cg, y
+                );
+
                 color_palette.push(pixel_hex.clone());
+
+                let pixel_hex = hex::encode([y as u8, co as u8, cg as u8]);
+
                 // Write the palette color to the file.
                 writeln!(&mut palette_file, "{}", pixel_hex).unwrap();
                 color_palette.len() - 1
@@ -61,7 +87,7 @@ fn main() {
     }
 
     // Fill the rest of the palette file with "000000" until it has 256 entries.
-    for _ in (color_palette.len()+1)..256 {
+    for _ in (color_palette.len() + 1)..256 {
         writeln!(&mut palette_file, "000000").unwrap();
     }
 }

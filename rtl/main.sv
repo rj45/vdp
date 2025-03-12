@@ -228,29 +228,21 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic             p2_de;
     logic             p2_vsync;
     logic             p2_hsync;
-    logic [23:0]      p2_rgb;
+    logic [23:0]      p2_ycocg;
+    logic [6:0]       p2_y;
+    logic [7:0]       p2_co;
+    logic [7:0]       p2_cg;
+
 
     palette_bram #("palette.hex") palbram_inst (
         .clk_pix,
         .colour_pix(p1_colour_pix),
-        .rgb(p2_rgb)
+        .rgb(p2_ycocg)
     );
 
-    // do the palette lookup
-    logic [7:0] p2_paint_r, p2_paint_g, p2_paint_b;
-    always_comb begin
-        p2_paint_b = p2_rgb[7:0];
-        p2_paint_g = p2_rgb[15:8];
-        p2_paint_r = p2_rgb[23:16];
-    end
-
-    // display colour: paint colour but black in blanking interval
-    logic [7:0] p2_display_r, p2_display_g, p2_display_b;
-    always_comb begin
-        p2_display_r = (de) ? p2_paint_r : 8'h0;
-        p2_display_g = (de) ? p2_paint_g : 8'h0;
-        p2_display_b = (de) ? p2_paint_b : 8'h0;
-    end
+    assign p2_y = p2_ycocg[22:16];
+    assign p2_co = p2_ycocg[15:8];
+    assign p2_cg = p2_ycocg[7:0];
 
     always_ff @(posedge clk_pix) begin
         p2_sx <= p1_sx;
@@ -261,17 +253,121 @@ module main #(parameter CORDW=11) ( // coordinate width
     end
 
     ////////////////////////////////////////////////////////////////
-    // Pix cycle p3: output to screen
+    // Pix cycle p3: Calculate tmp from ycocg
     ////////////////////////////////////////////////////////////////
 
+    logic [CORDW-1:0] p3_sx;
+    logic [CORDW-1:0] p3_sy;
+    logic             p3_de;
+    logic             p3_vsync;
+    logic             p3_hsync;
+    logic [7:0]       p3_co;
+    logic [7:0]       p3_cg;
+    logic [7:0]       p3_tmp;
+
     always_ff @(posedge clk_pix) begin
-        sx <= p2_sx;
-        sy <= p2_sy;
-        de <= p2_de;
-        vsync <= p2_vsync;
-        hsync <= p2_hsync;
-        r <= p2_display_r;
-        g <= p2_display_g;
-        b <= p2_display_b;
+        p3_sx <= p2_sx;
+        p3_sy <= p2_sy;
+        p3_de <= p2_de;
+        p3_vsync <= p2_vsync;
+        p3_hsync <= p2_hsync;
+
+        p3_co <= p2_co;
+        p3_cg <= p2_cg;
+        // p3_tmp <= {1'b0, p2_y[6:1]} - p2_cg[7:1];
+        p3_tmp <= $signed({1'b0, p2_y}) - $signed({p2_cg[7], p2_cg[7:1]});
     end
+
+    ////////////////////////////////////////////////////////////////
+    // Pix cycle p4: Calculate b, g from ycocg, tmp
+    ////////////////////////////////////////////////////////////////
+
+    logic [CORDW-1:0] p4_sx;
+    logic [CORDW-1:0] p4_sy;
+    logic             p4_de;
+    logic             p4_vsync;
+    logic             p4_hsync;
+    logic [7:0]       p4_co;
+    logic [7:0]       p4_g;
+    logic [7:0]       p4_b;
+
+    always_ff @(posedge clk_pix) begin
+        p4_sx <= p3_sx;
+        p4_sy <= p3_sy;
+        p4_de <= p3_de;
+        p4_vsync <= p3_vsync;
+        p4_hsync <= p3_hsync;
+
+        p4_co <= p3_co;
+        p4_g <= $signed(p3_cg) + $signed(p3_tmp);
+        p4_b <= $signed(p3_tmp) - $signed({p3_co[7], p3_co[7:1]});
+    end
+
+    ////////////////////////////////////////////////////////////////
+    // Pix cycle p5: Calculate r from co, b
+    ////////////////////////////////////////////////////////////////
+
+    logic [CORDW-1:0] p5_sx;
+    logic [CORDW-1:0] p5_sy;
+    logic             p5_de;
+    logic             p5_vsync;
+    logic             p5_hsync;
+    logic [7:0]       p5_r;
+    logic [7:0]       p5_g;
+    logic [7:0]       p5_b;
+
+    always_ff @(posedge clk_pix) begin
+        p5_sx <= p4_sx;
+        p5_sy <= p4_sy;
+        p5_de <= p4_de;
+        p5_vsync <= p4_vsync;
+        p5_hsync <= p4_hsync;
+
+        p5_r <= $signed(p4_b) + $signed(p4_co);
+        p5_g <= p4_g;
+        p5_b <= p4_b;
+    end
+
+    ////////////////////////////////////////////////////////////////
+    // Pix cycle p6: Clamp r, g, b to 7 bits
+    ////////////////////////////////////////////////////////////////
+
+    logic [CORDW-1:0] p6_sx;
+    logic [CORDW-1:0] p6_sy;
+    logic             p6_de;
+    logic             p6_vsync;
+    logic             p6_hsync;
+    logic [7:0]       p6_r;
+    logic [7:0]       p6_g;
+    logic [7:0]       p6_b;
+
+    always_ff @(posedge clk_pix) begin
+        p6_sx <= p5_sx;
+        p6_sy <= p5_sy;
+        p6_de <= p5_de;
+        p6_vsync <= p5_vsync;
+        p6_hsync <= p5_hsync;
+
+        p6_r <= (($signed(p5_r) < $signed(8'h0)) ? 8'h0 : ($signed(p5_r) > $signed(8'h7f)) ? 8'h7f : p5_r) << 1;
+        p6_g <= (($signed(p5_g) < $signed(8'h0)) ? 8'h0 : ($signed(p5_g) > $signed(8'h7f)) ? 8'h7f : p5_g) << 1;
+        p6_b <= (($signed(p5_b) < $signed(8'h0)) ? 8'h0 : ($signed(p5_b) > $signed(8'h7f)) ? 8'h7f : p5_b) << 1;
+    end
+
+    ////////////////////////////////////////////////////////////////
+    // Pix cycle p7: Output to screen
+    ////////////////////////////////////////////////////////////////
+
+
+    always_ff @(posedge clk_pix) begin
+        sx <= p6_sx;
+        sy <= p6_sy;
+        de <= p6_de;
+        vsync <= p6_vsync;
+        hsync <= p6_hsync;
+
+        r <= p6_de ? p6_r : 8'h0;
+        g <= p6_de ? p6_g : 8'h0;
+        b <= p6_de ? p6_b : 8'h0;
+    end
+
 endmodule
