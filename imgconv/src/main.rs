@@ -11,11 +11,11 @@ use std::io::Write;
 
 fn main() {
     // Read the PNG file.
-    let img = image::open("Gouldian_Finch_256x256_4b.png").unwrap();
+    let img = image::open("imgconv/Gouldian_Finch_256x256_4b.png").unwrap();
 
     // Set up the output files.
-    let mut pixel_file = File::create("../rtl/tiles.hex").unwrap();
-    let mut palette_file = File::create("../rtl/palette.hex").unwrap();
+    let mut pixel_file = File::create("rtl/tiles.hex").unwrap();
+    let mut palette_file = File::create("rtl/palette.hex").unwrap();
 
     // Set up the color palette.
     let mut color_palette: Vec<String> = Vec::new();

@@ -5,11 +5,11 @@
 
 module palette_bram #(parameter FILENAME="") (
   input  logic        clk_pix,
-  input  logic [7:0]  colour_pix,
+  input  logic [8:0]  colour_pix,
   output logic [23:0] rgb
 );
 
-  reg [23:0] rom[0:255];
+  reg [23:0] rom[0:511];
 
   initial begin
     if (FILENAME!="")

@@ -44,17 +44,17 @@ module main #(parameter CORDW=11) ( // coordinate width
     // Draw cycle d1: Calculate addresses
     //////////////////////////////////////////////////////////////////////
 
-    logic [10:0]  d1_lb_x;
-    logic [255:0] d1_unaligned_pixels;
-    logic [31:0]  d1_unaligned_valid_mask;
-    logic [3:0]   d1_alignment_shift;
+    logic [11:0]  d1_lb_x;
+    logic [143:0] d1_unaligned_pixels;
+    logic [15:0]  d1_unaligned_valid_mask;
+    logic [2:0]   d1_alignment_shift;
 
     logic [4:0]   d1_tile_y;
     logic [4:0]   d1_tile_x;
     logic [2:0]   d1_tile_row;
     logic         d1_tile_col;
 
-    logic [10:0]  d1_frame_counter;
+    logic [11:0]  d1_frame_counter;
     logic [7:0]   d1_tile_counter;
 
     logic         d1_line;
@@ -73,10 +73,10 @@ module main #(parameter CORDW=11) ( // coordinate width
 
             d1_tile_counter <= 8'h0;
         end else begin
-            d1_lb_x <= d1_lb_x + 16;
+            d1_lb_x <= d1_lb_x + 8;
 
-            d1_tile_y <= x0_sy[9:5];
-            d1_tile_row <= x0_sy[4:2]; // tile is 8 rows high, repeat each row 4 times
+            d1_tile_y <= x0_sy[8:4];
+            d1_tile_row <= x0_sy[3:1]; // tile is 8 rows high, repeat each row 2 times
             d1_tile_x <= d1_tile_counter[5:1];
             d1_tile_col <= d1_tile_counter[0];
 
@@ -92,9 +92,9 @@ module main #(parameter CORDW=11) ( // coordinate width
     //////////////////////////////////////////////////////////////////////
 
     logic [15:0]  d2_tile_data;
-    logic [31:0]  d2_tile_pixels;
+    logic [35:0]  d2_tile_pixels;
     logic [3:0]   d2_tile_valid_mask = 4'b1111;
-    logic [10:0]  d2_lb_x;
+    logic [11:0]  d2_lb_x;
     logic         d2_line;
     logic         d2_bufsel;
 
@@ -110,10 +110,10 @@ module main #(parameter CORDW=11) ( // coordinate width
 
     always_comb begin
         d2_tile_pixels = {
-            4'h0, d2_tile_data[15:12],
-            4'h0, d2_tile_data[11:8],
-            4'h0, d2_tile_data[7:4],
-            4'h0, d2_tile_data[3:0]
+            5'h0, d2_tile_data[15:12],
+            5'h0, d2_tile_data[11:8],
+            5'h0, d2_tile_data[7:4],
+            5'h0, d2_tile_data[3:0]
         };
     end
 
@@ -125,17 +125,17 @@ module main #(parameter CORDW=11) ( // coordinate width
 
 
     //////////////////////////////////////////////////////////////////////
-    // Draw cycle d3: Quadruple the pixels
+    // Draw cycle d3: Double the pixels
     //////////////////////////////////////////////////////////////////////
 
-    logic [6:0]   d3_lb_addr_draw;
-    logic [255:0] d3_unaligned_pixels;
-    logic [31:0]  d3_unaligned_valid_mask;
-    logic [3:0]   d3_alignment_shift;
+    logic [8:0]   d3_lb_addr_draw;
+    logic [143:0] d3_unaligned_pixels;
+    logic [15:0]  d3_unaligned_valid_mask;
+    logic [2:0]   d3_alignment_shift;
     logic         d3_line;
     logic         d3_bufsel;
 
-    pixel_quadrupler quad_inst (
+    pixel_doubler double_inst (
         .clk_draw(clk_pix),
         .rst_draw(d2_line),
 
@@ -158,9 +158,9 @@ module main #(parameter CORDW=11) ( // coordinate width
     // Draw cycle d4: Shift align the pixels
     //////////////////////////////////////////////////////////////////////
 
-    logic [127:0] d4_lb_colour_draw;
-    logic [15:0]  d4_lb_mask_draw;
-    logic [6:0]   d4_lb_addr_draw;
+    logic [71:0]  d4_lb_colour_draw;
+    logic [7:0]   d4_lb_mask_draw;
+    logic [8:0]   d4_lb_addr_draw;
     logic         d4_bufsel;
 
     shift_aligner shifter_inst (
@@ -185,7 +185,7 @@ module main #(parameter CORDW=11) ( // coordinate width
     // Pix cycle p1: Read the line buffer
     ////////////////////////////////////////////////////////////////
 
-    logic [7:0]       p1_colour_pix;
+    logic [8:0]       p1_colour_pix;
     logic [CORDW-1:0] p1_sx;
     logic [CORDW-1:0] p1_sy;
     logic             p1_de;
@@ -199,12 +199,12 @@ module main #(parameter CORDW=11) ( // coordinate width
         .buffsel_pix(x0_sy[0]),
         .buffsel_draw(d4_bufsel), // for now
 
-        .addr_on_pix(x0_sx),
+        .addr_on_pix({1'd0,x0_sx}),
         .colour_on_pix(p1_colour_pix),
 
-        .addr_on_draw(7'd0), // for now
+        .addr_on_draw(9'd0), // for now
         .we_on_draw(1'd0), // for now
-        .colour_on_draw(128'd0), // for now
+        .colour_on_draw(72'd0), // for now
 
         .addr_off_draw(d4_lb_addr_draw),
         .we_off_draw(d4_lb_mask_draw),
@@ -253,6 +253,37 @@ module main #(parameter CORDW=11) ( // coordinate width
     end
 
     ////////////////////////////////////////////////////////////////
+    // Pix cycle p2b: Fade the y value as a test
+    ////////////////////////////////////////////////////////////////
+
+    logic [CORDW-1:0] p2b_sx;
+    logic [CORDW-1:0] p2b_sy;
+    logic             p2b_de;
+    logic             p2b_vsync;
+    logic             p2b_hsync;
+    logic [6:0]       p2b_y;
+    logic [7:0]       p2b_co;
+    logic [7:0]       p2b_cg;
+    logic [7:0]      p2b_y_tmp;
+
+    always_comb begin
+        p2b_y_tmp = {1'b0,p2_y} - d1_frame_counter[7:1];
+        if (p2b_y_tmp > 8'd127) p2b_y_tmp = 8'd0;
+    end
+
+    always_ff @(posedge clk_pix) begin
+        p2b_sx <= p2_sx;
+        p2b_sy <= p2_sy;
+        p2b_de <= p2_de;
+        p2b_vsync <= p2_vsync;
+        p2b_hsync <= p2_hsync;
+
+        p2b_y <= p2_y; //p2b_y_tmp[6:0];
+        p2b_co <= p2_co;
+        p2b_cg <= p2_cg;
+    end
+
+    ////////////////////////////////////////////////////////////////
     // Pix cycle p3: Calculate tmp from ycocg
     ////////////////////////////////////////////////////////////////
 
@@ -266,16 +297,16 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic [7:0]       p3_tmp;
 
     always_ff @(posedge clk_pix) begin
-        p3_sx <= p2_sx;
-        p3_sy <= p2_sy;
-        p3_de <= p2_de;
-        p3_vsync <= p2_vsync;
-        p3_hsync <= p2_hsync;
+        p3_sx <= p2b_sx;
+        p3_sy <= p2b_sy;
+        p3_de <= p2b_de;
+        p3_vsync <= p2b_vsync;
+        p3_hsync <= p2b_hsync;
 
-        p3_co <= p2_co;
-        p3_cg <= p2_cg;
-        // p3_tmp <= {1'b0, p2_y[6:1]} - p2_cg[7:1];
-        p3_tmp <= $signed({1'b0, p2_y}) - $signed({p2_cg[7], p2_cg[7:1]});
+        p3_co <= p2b_co;
+        p3_cg <= p2b_cg;
+        // p3_tmp <= {1'b0, p2b_y[6:1]} - p2b_cg[7:1];
+        p3_tmp <= $signed({1'b0, p2b_y}) - $signed({p2b_cg[7], p2b_cg[7:1]});
     end
 
     ////////////////////////////////////////////////////////////////
