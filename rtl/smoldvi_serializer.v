@@ -15,6 +15,9 @@
  *                                                                    *
  *********************************************************************/
 
+`default_nettype none
+`timescale 1ns / 1ps
+
 module smoldvi_serialiser (
 	input  wire       clk_pix,
 	input  wire       rst_n_pix,

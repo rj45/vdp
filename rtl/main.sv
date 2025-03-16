@@ -42,27 +42,50 @@ module main #(parameter CORDW=11) ( // coordinate width
         .frame(x0_frame)
     );
 
-    // CDC from pix clock to draw clock -- part 1
-    logic             d0x0_line;
-    logic             d0x0_frame;
-    logic [CORDW-1:0] d0x0_sy;
+    // CDC of line from pix clock to draw clock
+    logic d0_line;
+    cdc_pulse_synchronizer_2phase line_cdc (
+        .sending_clock(clk_pix),
+        .sending_pulse_in(x0_line),
+        // verilator lint_off PINCONNECTEMPTY
+        // .sending_ready(),
+        // verilator lint_on PINCONNECTEMPTY
 
+        .receiving_clock(clk_draw),
+        .receiving_pulse_out(d0_line)
+    );
+
+    // CDC of frame from pix clock to draw clock
+    logic d0_frame;
+    cdc_pulse_synchronizer_2phase frame_cdc (
+        .sending_clock(clk_pix),
+        .sending_pulse_in(x0_frame),
+        // verilator lint_off PINCONNECTEMPTY
+        // .sending_ready(),
+        // verilator lint_on PINCONNECTEMPTY
+
+        .receiving_clock(clk_draw),
+        .receiving_pulse_out(d0_frame)
+    );
+
+    // CDC from pix clock to draw clock -- part 1
+    // this isn't entirely required, since d0_line is already synchronized
+    // and y should be stable by the time the pulse goes through CDC
+    logic [CORDW-1:0] d0x0_sy;
     always_ff @(posedge clk_draw) begin
-        d0x0_line <= x0_line;
-        d0x0_frame <= x0_frame;
         d0x0_sy <= x0_sy;
     end
 
 
     // CDC from pix clock to draw clock -- part 2
-    logic             d0_line;
-    logic             d0_frame;
+
     logic [CORDW-1:0] d0_sy;
 
     always_ff @(posedge clk_draw) begin
-        d0_line <= d0x0_line;
-        d0_frame <= d0x0_frame;
-        d0_sy <= d0x0_sy;
+        // y should only increment on line going high
+        if (d0_line) begin
+            d0_sy <= d0x0_sy;
+        end
     end
 
     //////////////////////////////////////////////////////////////////////
@@ -217,14 +240,12 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic             p1_vsync;
     logic             p1_hsync;
 
-
-
     double_buffer db_inst (
         .clk_pix,
         .clk_draw,
 
         .buffsel_pix(x0_sy[0]),
-        .buffsel_draw(d4_bufsel), // for now
+        .buffsel_draw(d4_bufsel),
 
         .addr_on_pix({1'd0,x0_sx}),
         .colour_on_pix(p1_colour_pix),

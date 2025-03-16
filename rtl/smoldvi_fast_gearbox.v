@@ -1,3 +1,6 @@
+`default_nettype none
+`timescale 1ns / 1ps
+
 module smoldvi_fast_gearbox #(
 	parameter W_IN = 10,
 	parameter W_OUT = 2,

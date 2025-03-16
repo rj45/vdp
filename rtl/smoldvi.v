@@ -1,3 +1,6 @@
+`default_nettype none
+`timescale 1ns / 1ps
+
 module smoldvi #(
 	parameter RGB_BITS = 7              // 1 to 7 bits, inclusive
 ) (

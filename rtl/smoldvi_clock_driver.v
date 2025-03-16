@@ -5,6 +5,9 @@
 // This module takes a half-rate bit clock (5x pixel clock) and drives a
 // pseudodifferential pixel clock using DDR outputs.
 
+`default_nettype none
+`timescale 1ns / 1ps
+
 module smoldvi_clock_driver (
 	input  wire       clk_x5,
 	input  wire       rst_n_x5,

@@ -2,6 +2,9 @@ VERILOG = ulx3s/pll.v rtl/vga.sv rtl/hdmi.v rtl/palette_bram.sv \
           rtl/linebuffer_bram.sv rtl/double_buffer.sv rtl/pixel_doubler.sv \
 		  rtl/smoldvi.v rtl/smoldvi_clock_driver.v rtl/smoldvi_fast_gearbox.v \
 		  rtl/smoldvi_serializer.v rtl/smoldvi_tmds_encode.v \
+		  rtl/fpgacpu_ca/cdc_bit_synchronizer.sv rtl/fpgacpu_ca/pulse_generator.sv \
+		  rtl/fpgacpu_ca/cdc_pulse_synchronizer_2phase.sv rtl/fpgacpu_ca/register.sv \
+		  rtl/fpgacpu_ca/register_toggle.sv \
 		  rtl/shift_aligner.sv rtl/tile_bram.sv rtl/main.sv ulx3s/top_ulx3s.sv
 
 TESTS = bin/pixel_doubler_tb

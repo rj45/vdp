@@ -59,12 +59,14 @@ module top_ulx3s  (
 `endif
 
     main main_inst (
-        .clk_draw(clk_25mhz),
+        .clk_draw(clk_draw),
         .rst_draw,
         .clk_pix,
         .rst_pix,
+        // verilator lint_off PINCONNECTEMPTY
         .sx(),
         .sy(),
+        // verilator lint_on PINCONNECTEMPTY
         .hsync,
         .vsync,
         .de,

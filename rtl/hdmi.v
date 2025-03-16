@@ -1,6 +1,9 @@
 // from: https://github.com/lawrie/ulx3s_zx_spectrum/
 // Original origin / license unknown
 
+`default_nettype none
+`timescale 1ns / 1ps
+
 // module port
 //
 module hdmi(

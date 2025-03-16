@@ -44,6 +44,9 @@
 // Note that the instantiator is responsible for holding d[7:0] constant over
 // two cycles (it's not registered here)
 
+`default_nettype none
+`timescale 1ns / 1ps
+
 module smoldvi_tmds_encode (
 	input  wire       clk,
 	input  wire       rst_n,
