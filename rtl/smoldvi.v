@@ -1,5 +1,5 @@
 module smoldvi #(
-	parameter RGB_BITS = 6              // 1 to 7 bits, inclusive
+	parameter RGB_BITS = 7              // 1 to 7 bits, inclusive
 ) (
 	// Full-rate pixel clock, half-rate bit clock. Must have exact 1:5 frequency
 	// ratio, and a common root oscillator

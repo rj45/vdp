@@ -7,11 +7,13 @@ module pll
     input clkin, // 25 MHz, 0 deg
     output clk_pix5x, // 300 MHz, 0 deg
     output clk_pix, // 60 MHz, 0 deg
+    output clk_draw, // 60 MHz, 0 deg
     output locked
 );
 (* FREQUENCY_PIN_CLKI="25" *)
 (* FREQUENCY_PIN_CLKOP="300" *)
 (* FREQUENCY_PIN_CLKOS="60" *)
+(* FREQUENCY_PIN_CLKOS2="60" *)
 (* ICP_CURRENT="12" *) (* LPF_RESISTOR="8" *) (* MFG_ENABLE_FILTEROPAMP="1" *) (* MFG_GMCREF_SEL="2" *)
 EHXPLLL #(
         .PLLRST_ENA("DISABLED"),
@@ -31,6 +33,10 @@ EHXPLLL #(
         .CLKOS_DIV(10),
         .CLKOS_CPHASE(1),
         .CLKOS_FPHASE(0),
+        .CLKOS2_ENABLE("ENABLED"),
+        .CLKOS2_DIV(10),
+        .CLKOS2_CPHASE(1),
+        .CLKOS2_FPHASE(0),
         .FEEDBK_PATH("CLKOP"),
         .CLKFB_DIV(12)
     ) pll_i (
@@ -39,6 +45,7 @@ EHXPLLL #(
         .CLKI(clkin),
         .CLKOP(clk_pix5x),
         .CLKOS(clk_pix),
+        .CLKOS2(clk_draw),
         .CLKFB(clk_pix5x),
         .CLKINTFB(),
         .PHASESEL0(1'b0),

@@ -25,6 +25,8 @@ module top_test #(parameter CORDW=11) (  // coordinate width
     main test_inst (
         .clk_pix,
         .rst_pix(sim_rst),
+        .clk_draw(clk_pix),
+        .rst_draw(sim_rst),
         .sx,
         .sy,
         /* verilator lint_off PINCONNECTEMPTY */

@@ -30,25 +30,44 @@ module vga #(parameter CORDW=11) (
     parameter VS_END = VS_STA + 8;     // sync ends
     parameter SCREEN = 740;            // last line on screen (after back porch)
 
+    logic [CORDW-1:0] nsx;
+    logic [CORDW-1:0] nsy;
+    logic nhsync;
+    logic nvsync;
+    logic nde;
+    logic nline;
+    logic nframe;
+
     always_comb begin
-        hsync = ~(sx >= HS_STA && sx < HS_END);  // invert: negative polarity
-        vsync = ~(sy >= VS_STA && sy < VS_END);  // invert: negative polarity
-        de = (sx <= HA_END && sy <= VA_END);
-        line = (sx == LINE);
-        frame = (sx == LINE && sy == SCREEN);
+        nhsync = ~(nsx >= HS_STA && nsx < HS_END);  // invert: negative polarity
+        nvsync = ~(nsy >= VS_STA && nsy < VS_END);  // invert: negative polarity
+        nde = (nsx <= HA_END && nsy <= VA_END);
+        nline = (nsx == LINE);
+        nframe = (nsx == LINE && nsy == SCREEN);
     end
 
     // calculate horizontal and vertical screen position
     always_ff @(posedge clk_pix) begin
         if (line) begin  // last pixel on line?
-            sx <= 0;
-            sy <= frame ? 0 : sy + 1;  // last line on screen?
+            nsx <= 0;
+            nsy <= frame ? 0 : nsy + 1;  // last line on screen?
         end else begin
-            sx <= sx + 1;
+            nsx <= nsx + 1;
         end
         if (rst_pix) begin
-            sx <= 0;
-            sy <= 0;
+            nsx <= 0;
+            nsy <= 0;
         end
+    end
+
+    // register everything for speed
+    always_ff @(posedge clk_pix) begin
+        sx <= nsx;
+        sy <= nsy;
+        hsync <= nhsync;
+        vsync <= nvsync;
+        de <= nde;
+        line <= nline;
+        frame <= nframe;
     end
 endmodule

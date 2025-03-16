@@ -6,7 +6,7 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-`define SMOLDVI 1
+// `define SMOLDVI 1
 
 module top_ulx3s  (
     input  wire logic clk_25mhz,           // input clock
@@ -19,17 +19,21 @@ module top_ulx3s  (
     );
 
     // clock
-    logic clk_pix, clk_pix5x, locked;
+    logic clk_pix, clk_pix5x, clk_draw, locked;
     pll pll_inst (
         .clkin(clk_25mhz),
         .clk_pix,
         .clk_pix5x,
+        .clk_draw,
         .locked
     );
 
     // reset -- TODO: make more robust
     logic rst_pix;
     always_ff @(posedge clk_pix) rst_pix <= ~locked;
+
+    logic rst_draw;
+    always_ff @(posedge clk_draw) rst_draw <= ~locked;
 
     logic hsync, vsync, de;
     logic [7:0] r, g, b;
@@ -55,6 +59,8 @@ module top_ulx3s  (
 `endif
 
     main main_inst (
+        .clk_draw(clk_25mhz),
+        .rst_draw,
         .clk_pix,
         .rst_pix,
         .sx(),

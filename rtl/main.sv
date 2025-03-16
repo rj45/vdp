@@ -6,6 +6,8 @@
 module main #(parameter CORDW=11) ( // coordinate width
     input  logic clk_pix,           // pixel clock
     input  logic rst_pix,           // pixel reset
+    input  logic clk_draw,          // draw clock
+    input  logic rst_draw,          // draw reset
     output logic [CORDW-1:0] sx,    // horizontal position
     output logic [CORDW-1:0] sy,    // vertical position
     output logic de,                // data enable (low in blanking interval)
@@ -40,6 +42,29 @@ module main #(parameter CORDW=11) ( // coordinate width
         .frame(x0_frame)
     );
 
+    // CDC from pix clock to draw clock -- part 1
+    logic             d0x0_line;
+    logic             d0x0_frame;
+    logic [CORDW-1:0] d0x0_sy;
+
+    always_ff @(posedge clk_draw) begin
+        d0x0_line <= x0_line;
+        d0x0_frame <= x0_frame;
+        d0x0_sy <= x0_sy;
+    end
+
+
+    // CDC from pix clock to draw clock -- part 2
+    logic             d0_line;
+    logic             d0_frame;
+    logic [CORDW-1:0] d0_sy;
+
+    always_ff @(posedge clk_draw) begin
+        d0_line <= d0x0_line;
+        d0_frame <= d0x0_frame;
+        d0_sy <= d0x0_sy;
+    end
+
     //////////////////////////////////////////////////////////////////////
     // Draw cycle d1: Calculate addresses
     //////////////////////////////////////////////////////////////////////
@@ -60,10 +85,10 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic         d1_line;
     logic         d1_bufsel;
 
-    always_ff @(posedge clk_pix) begin
-        if (x0_frame) d1_frame_counter <= d1_frame_counter + 1;
+    always_ff @(posedge clk_draw) begin
+        if (d0_frame) d1_frame_counter <= d1_frame_counter + 1;
 
-        if (x0_line) begin
+        if (d0_line) begin
             d1_lb_x <= d1_frame_counter;
 
             d1_tile_y <= 5'h0;
@@ -75,16 +100,16 @@ module main #(parameter CORDW=11) ( // coordinate width
         end else begin
             d1_lb_x <= d1_lb_x + 8;
 
-            d1_tile_y <= x0_sy[8:4];
-            d1_tile_row <= x0_sy[3:1]; // tile is 8 rows high, repeat each row 2 times
+            d1_tile_y <= d0_sy[8:4];
+            d1_tile_row <= d0_sy[3:1]; // tile is 8 rows high, repeat each row 2 times
             d1_tile_x <= d1_tile_counter[5:1];
             d1_tile_col <= d1_tile_counter[0];
 
             d1_tile_counter <= d1_tile_counter + 1;
         end
 
-        d1_line <= x0_line;
-        d1_bufsel <= x0_sy[0];
+        d1_line <= d0_line;
+        d1_bufsel <= d0_sy[0];
     end
 
     //////////////////////////////////////////////////////////////////////
@@ -99,7 +124,7 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic         d2_bufsel;
 
     tile_bram #("tiles.hex") tile_inst (
-        .clk_draw(clk_pix),
+        .clk_draw(clk_draw),
         .tile_y(d1_tile_y),
         .tile_x(d1_tile_x),
         .tile_row(d1_tile_row),
@@ -117,7 +142,7 @@ module main #(parameter CORDW=11) ( // coordinate width
         };
     end
 
-    always_ff @(posedge clk_pix) begin
+    always_ff @(posedge clk_draw) begin
         d2_lb_x <= d1_lb_x;
         d2_line <= d1_line;
         d2_bufsel <= d1_bufsel;
@@ -136,7 +161,7 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic         d3_bufsel;
 
     pixel_doubler double_inst (
-        .clk_draw(clk_pix),
+        .clk_draw,
         .rst_draw(d2_line),
 
         .tile_pixels(d2_tile_pixels),
@@ -149,7 +174,7 @@ module main #(parameter CORDW=11) ( // coordinate width
         .alignment_shift(d3_alignment_shift)
     );
 
-    always_ff @(posedge clk_pix) begin
+    always_ff @(posedge clk_draw) begin
         d3_line <= d2_line;
         d3_bufsel <= d2_bufsel;
     end
@@ -164,7 +189,7 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic         d4_bufsel;
 
     shift_aligner shifter_inst (
-        .clk_draw(clk_pix),
+        .clk_draw,
         .rst_draw(d3_line),
 
         .unaligned_pixels(d3_unaligned_pixels),
@@ -175,7 +200,7 @@ module main #(parameter CORDW=11) ( // coordinate width
         .aligned_valid_mask(d4_lb_mask_draw)
     );
 
-    always_ff @(posedge clk_pix) begin
+    always_ff @(posedge clk_draw) begin
         d4_lb_addr_draw <= d3_lb_addr_draw;
         d4_bufsel <= d3_bufsel;
     end
@@ -192,9 +217,11 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic             p1_vsync;
     logic             p1_hsync;
 
+
+
     double_buffer db_inst (
         .clk_pix,
-        .clk_draw(clk_pix), // for now
+        .clk_draw,
 
         .buffsel_pix(x0_sy[0]),
         .buffsel_draw(d4_bufsel), // for now
@@ -219,6 +246,28 @@ module main #(parameter CORDW=11) ( // coordinate width
         p1_hsync <= x0_hsync;
     end
 
+     ////////////////////////////////////////////////////////////////
+    // Pix cycle p1b: Lookup the palette entry
+    ////////////////////////////////////////////////////////////////
+
+    logic [CORDW-1:0] p1b_sx;
+    logic [CORDW-1:0] p1b_sy;
+    logic             p1b_de;
+    logic             p1b_vsync;
+    logic             p1b_hsync;
+    logic [8:0]       p1b_colour_pix;
+
+
+    always_ff @(posedge clk_pix) begin
+        p1b_sx <= p1_sx;
+        p1b_sy <= p1_sy;
+        p1b_de <= p1_de;
+        p1b_vsync <= p1_vsync;
+        p1b_hsync <= p1_hsync;
+        p1b_colour_pix <= p1_colour_pix;
+    end
+
+
     ////////////////////////////////////////////////////////////////
     // Pix cycle p2: Lookup the palette entry
     ////////////////////////////////////////////////////////////////
@@ -236,7 +285,7 @@ module main #(parameter CORDW=11) ( // coordinate width
 
     palette_bram #("palette.hex") palbram_inst (
         .clk_pix,
-        .colour_pix(p1_colour_pix),
+        .colour_pix(p1b_colour_pix),
         .rgb(p2_ycocg)
     );
 
@@ -245,11 +294,11 @@ module main #(parameter CORDW=11) ( // coordinate width
     assign p2_cg = p2_ycocg[7:0];
 
     always_ff @(posedge clk_pix) begin
-        p2_sx <= p1_sx;
-        p2_sy <= p1_sy;
-        p2_de <= p1_de;
-        p2_vsync <= p1_vsync;
-        p2_hsync <= p1_hsync;
+        p2_sx <= p1b_sx;
+        p2_sy <= p1b_sy;
+        p2_de <= p1b_de;
+        p2_vsync <= p1b_vsync;
+        p2_hsync <= p1b_hsync;
     end
 
     ////////////////////////////////////////////////////////////////

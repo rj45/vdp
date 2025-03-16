@@ -37,8 +37,8 @@ module double_buffer (
     input  logic [71:0]  colour_off_draw
 );
 
-    logic [8:0]   lb0_addr_pix;
-    logic [71:0]  lb0_colour_pix;
+    logic [11:0]  lb0_addr_pix;
+    logic [8:0]   lb0_colour_pix;
     logic [8:0]   lb0_addr_draw;
     logic [7:0]   lb0_we_draw;
     logic [71:0]  lb0_colour_draw;
@@ -54,9 +54,9 @@ module double_buffer (
         .colour_draw(lb0_colour_draw)
     );
 
-    logic [8:0]   lb1_addr_pix;
-    logic [71:0] lb1_colour_pix;
-    logic [8:0]   lb1_addr_draw;
+    logic [11:0] lb1_addr_pix;
+    logic [8:0]  lb1_colour_pix;
+    logic [8:0]  lb1_addr_draw;
     logic [7:0]  lb1_we_draw;
     logic [71:0] lb1_colour_draw;
 
@@ -74,38 +74,16 @@ module double_buffer (
     // The addr_on_pix needs to be delayed by one cycle because the bram takes a cycle to read
     logic [2:0]  prev_addr_on_pix;
 
-    always_ff @(posedge clk_draw) begin
-        prev_addr_on_pix <= addr_on_pix[2:0];
-    end
-
     // handle the pix side reading
     always_comb begin
         if (buffsel_pix) begin
-            lb0_addr_pix = addr_on_pix[11:3];
+            lb0_addr_pix = addr_on_pix;
             lb1_addr_pix = 0;
-            case (prev_addr_on_pix[2:0])
-                3'h0: colour_on_pix = lb0_colour_pix[71:63];
-                3'h1: colour_on_pix = lb0_colour_pix[62:54];
-                3'h2: colour_on_pix = lb0_colour_pix[53:45];
-                3'h3: colour_on_pix = lb0_colour_pix[44:36];
-                3'h4: colour_on_pix = lb0_colour_pix[35:27];
-                3'h5: colour_on_pix = lb0_colour_pix[26:18];
-                3'h6: colour_on_pix = lb0_colour_pix[17:9];
-                3'h7: colour_on_pix = lb0_colour_pix[8:0];
-            endcase
+            colour_on_pix = lb0_colour_pix;
         end else begin
-            lb1_addr_pix = addr_on_pix[11:3];
+            lb1_addr_pix = addr_on_pix;
             lb0_addr_pix = 0;
-            case (prev_addr_on_pix[2:0])
-                3'h0: colour_on_pix = lb1_colour_pix[71:63];
-                3'h1: colour_on_pix = lb1_colour_pix[62:54];
-                3'h2: colour_on_pix = lb1_colour_pix[53:45];
-                3'h3: colour_on_pix = lb1_colour_pix[44:36];
-                3'h4: colour_on_pix = lb1_colour_pix[35:27];
-                3'h5: colour_on_pix = lb1_colour_pix[26:18];
-                3'h6: colour_on_pix = lb1_colour_pix[17:9];
-                3'h7: colour_on_pix = lb1_colour_pix[8:0];
-            endcase
+            colour_on_pix = lb1_colour_pix;
         end
     end
 

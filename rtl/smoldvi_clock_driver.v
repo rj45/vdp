@@ -33,7 +33,7 @@ end
   // (pseudo-) differential DDR driver (ECP5 synthesis version)
   //*
   ODDRX1F ddrp( .Q(qp), .SCLK(clk_x5), .D0(ring_ctr[0]), .D1(ring_ctr[1]), .RST(1'b0) );
-  ODDRX1F ddrn( .Q(pn), .SCLK(clk_x5), .D0(ring_ctr[5]), .D1(ring_ctr[6]), .RST(1'b0) );
+  ODDRX1F ddrn( .Q(qn), .SCLK(clk_x5), .D0(ring_ctr[5]), .D1(ring_ctr[6]), .RST(1'b0) );
 `endif
 
 endmodule
