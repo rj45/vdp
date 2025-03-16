@@ -5,6 +5,7 @@
 // I used Gimp to scale, crop and reduce it to 15 colors
 
 use image::{GenericImageView, Pixel};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 
@@ -14,7 +15,7 @@ fn main() {
 
     // Set up the output files.
     let mut tile_map_file = File::create("rtl/tile_map.hex").unwrap();
-    let mut pixel_file = File::create("rtl/tiles.hex").unwrap();
+    let mut tile_data_file = File::create("rtl/tiles.hex").unwrap();
     let mut palette_file = File::create("rtl/palette.hex").unwrap();
 
     // Set up the color palette.
@@ -37,25 +38,18 @@ fn main() {
     assert!(img.width() % 8 == 0);
     assert!(img.height() % 8 == 0);
 
-    // Loop through the pixels in the image.
+    let mut tiles: Vec<[u16; 16]> =
+        Vec::with_capacity(tilemap_width as usize * tilemap_height as usize);
+    for _ in 0..tilemap_width * tilemap_height {
+        tiles.push([0; 16]);
+    }
+
+    // Loop through the pixels in the image and generate tiles.
     for (x, y, pixel) in img.pixels() {
         let tilemap_x = x / 8;
         let tilemap_y = y / 8;
         let tile_x = x % 8;
         let tile_y = y % 8;
-
-        if tile_x == 0 && tile_y == 0 {
-            if tilemap_x == 0 && y != 0 {
-                writeln!(&mut tile_map_file).unwrap();
-            }
-            // Write the tilemap entry to the file.
-            write!(
-                &mut tile_map_file,
-                "{:04x} ",
-                tilemap_y * tilemap_width + tilemap_x
-            )
-            .unwrap();
-        }
 
         // Convert the pixel to rgba.
         let rgba = pixel.to_rgba();
@@ -100,33 +94,71 @@ fn main() {
             }
         };
 
-        // Add the palette index to the pixel line, incrementing its index.
-        pixel_line.push_str(&format!("{:01x}", color_index + 1));
-
-        // If there are 256 pixels on the line, write it to the file and start a new line.
-        if pixel_line.len() == 256 {
-            writeln!(&mut pixel_file, "{}", chunk_into_four_chars(&pixel_line)).unwrap();
-            pixel_line.clear();
-        }
+        let tile = tiles
+            .get_mut(tilemap_y as usize * tilemap_width as usize + tilemap_x as usize)
+            .unwrap();
+        let tile_index = (tile_y * 2 + tile_x / 4) as usize;
+        tile[tile_index] |= ((color_index + 1) << ((3 - (tile_x % 4)) * 4)) as u16;
     }
 
-    // Write any remaining pixels to the file.
-    if !pixel_line.is_empty() {
-        writeln!(&mut pixel_file, "{}", chunk_into_four_chars(&pixel_line)).unwrap();
+    // Deduplicate tiles
+    let mut dupe_tile_count = 0;
+    let mut tile_data_dedup_map: HashMap<[u16; 16], u16> = HashMap::new();
+    let mut tile_dedupe_map: HashMap<u16, u16> = HashMap::new();
+    let mut deduped_tiles: Vec<[u16; 16]> = Vec::new();
+    for (i, tile) in tiles.iter().enumerate() {
+        let index = if let Some(&index) = tile_data_dedup_map.get(tile) {
+            println!("tile {} == tile {}", i, index);
+            dupe_tile_count += 1;
+            index
+        } else {
+            let index = deduped_tiles.len() as u16;
+            deduped_tiles.push(*tile);
+            tile_data_dedup_map.insert(*tile, index);
+
+            index
+        };
+        tile_dedupe_map.insert(i as u16, index);
+    }
+    println!(
+        "dupe tile count: {} unique tile count: {}",
+        dupe_tile_count,
+        tile_data_dedup_map.len()
+    );
+
+    // Write the tile map to the file.
+    for y in 0..tilemap_height {
+        for x in 0..tilemap_width {
+            let index = tile_dedupe_map
+                .get(&((y * tilemap_width + x) as u16))
+                .unwrap_or_else(|| panic!("tile {} not found", y * tilemap_width + x));
+            write!(&mut tile_map_file, "{:04x} ", index).unwrap();
+        }
+        writeln!(&mut tile_map_file).unwrap();
+    }
+
+    // Write the deduped tiles to the file.
+    for grid_y in 0..tilemap_height {
+        for y in 0..8 {
+            for grid_x in 0..tilemap_width {
+                let tile = deduped_tiles
+                    .get(grid_y as usize * tilemap_width as usize + grid_x as usize)
+                    .copied()
+                    .unwrap_or_default();
+                write!(
+                    &mut tile_data_file,
+                    "{:04x} {:04x} ",
+                    tile[y * 2],
+                    tile[y * 2 + 1]
+                )
+                .unwrap();
+            }
+            writeln!(&mut tile_data_file).unwrap();
+        }
     }
 
     // Fill the rest of the palette file with "000000" until it has 256 entries.
     for _ in (color_palette.len() + 1)..256 {
         writeln!(&mut palette_file, "000000").unwrap();
     }
-}
-
-// Takes a string and chunks it into four-characters groups, adding a space between each group.
-fn chunk_into_four_chars(s: &str) -> String {
-    s.as_bytes()
-        .chunks(4)
-        .map(std::str::from_utf8)
-        .collect::<Result<Vec<&str>, _>>()
-        .unwrap()
-        .join(" ")
 }

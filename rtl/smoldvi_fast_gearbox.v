@@ -19,9 +19,6 @@ module smoldvi_fast_gearbox #(
 localparam N_IN = STORAGE_SIZE / W_IN;
 localparam N_OUT = STORAGE_SIZE / W_OUT;
 
-(* keep = 1'b1 *) reg [STORAGE_SIZE-1:0] launch_reg;
-(* keep = 1'b1 *) reg [STORAGE_SIZE-1:0] capture_reg;
-
 // ----------------------------------------------------------------------------
 // Apply transitions to sections of launch register, in a circular manner,
 // across successive clk_in cycles
