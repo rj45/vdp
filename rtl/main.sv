@@ -97,8 +97,8 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic [15:0]  d1_unaligned_valid_mask;
     logic [2:0]   d1_alignment_shift;
 
-    logic [4:0]   d1_tile_y;
-    logic [4:0]   d1_tile_x;
+    logic [4:0]   d1_tile_map_y;
+    logic [4:0]   d1_tile_map_x;
     logic [2:0]   d1_tile_row;
     logic         d1_tile_col;
 
@@ -114,18 +114,18 @@ module main #(parameter CORDW=11) ( // coordinate width
         if (d0_line) begin
             d1_lb_x <= d1_frame_counter;
 
-            d1_tile_y <= 5'h0;
+            d1_tile_map_y <= 5'h0;
             d1_tile_row <= 3'h0;
-            d1_tile_x <= 5'h0;
+            d1_tile_map_x <= 5'h0;
             d1_tile_col <= 1'h0;
 
             d1_tile_counter <= 8'h0;
         end else begin
             d1_lb_x <= d1_lb_x + 8;
 
-            d1_tile_y <= d0_sy[8:4];
+            d1_tile_map_y <= d0_sy[8:4];
             d1_tile_row <= d0_sy[3:1]; // tile is 8 rows high, repeat each row 2 times
-            d1_tile_x <= d1_tile_counter[5:1];
+            d1_tile_map_x <= d1_tile_counter[5:1];
             d1_tile_col <= d1_tile_counter[0];
 
             d1_tile_counter <= d1_tile_counter + 1;
@@ -136,100 +136,127 @@ module main #(parameter CORDW=11) ( // coordinate width
     end
 
     //////////////////////////////////////////////////////////////////////
-    // Draw cycle d2: Load the pixel data from the tile BRAM
+    // Draw cycle d2: Load the tile map data from the tile map BRAM
     //////////////////////////////////////////////////////////////////////
 
-    logic [15:0]  d2_tile_data;
-    logic [35:0]  d2_tile_pixels;
-    logic [3:0]   d2_tile_valid_mask = 4'b1111;
     logic [11:0]  d2_lb_x;
+    logic [15:0]  d2_tile_map_data;
+    logic [2:0]   d2_tile_row;
+    logic         d2_tile_col;
     logic         d2_line;
     logic         d2_bufsel;
 
-    tile_bram #("tiles.hex") tile_inst (
+    tile_map_bram #("tile_map.hex") tile_map_inst (
         .clk_draw(clk_draw),
-        .tile_y(d1_tile_y),
-        .tile_x(d1_tile_x),
-        .tile_row(d1_tile_row),
-        .tile_col(d1_tile_col),
+        .tile_y(d1_tile_map_y),
+        .tile_x(d1_tile_map_x),
 
-        .tile_data(d2_tile_data)
+        .tile_map_data(d2_tile_map_data)
     );
-
-    always_comb begin
-        d2_tile_pixels = {
-            5'h0, d2_tile_data[15:12],
-            5'h0, d2_tile_data[11:8],
-            5'h0, d2_tile_data[7:4],
-            5'h0, d2_tile_data[3:0]
-        };
-    end
 
     always_ff @(posedge clk_draw) begin
         d2_lb_x <= d1_lb_x;
         d2_line <= d1_line;
         d2_bufsel <= d1_bufsel;
+        d2_tile_row <= d1_tile_row;
+        d2_tile_col <= d1_tile_col;
     end
 
-
     //////////////////////////////////////////////////////////////////////
-    // Draw cycle d3: Double the pixels
+    // Draw cycle d3: Load the pixel data from the tile BRAM
     //////////////////////////////////////////////////////////////////////
 
-    logic [8:0]   d3_lb_addr_draw;
-    logic [143:0] d3_unaligned_pixels;
-    logic [15:0]  d3_unaligned_valid_mask;
-    logic [2:0]   d3_alignment_shift;
+    logic [15:0]  d3_tile_data;
+    logic [35:0]  d3_tile_pixels;
+    logic [3:0]   d3_tile_valid_mask = 4'b1111;
+    logic [11:0]  d3_lb_x;
     logic         d3_line;
     logic         d3_bufsel;
 
-    pixel_doubler double_inst (
-        .clk_draw,
-        .rst_draw(d2_line),
+    tile_bram #("tiles.hex") tile_inst (
+        .clk_draw(clk_draw),
+        .tile_y(d2_tile_map_data[9:5]),
+        .tile_x(d2_tile_map_data[4:0]),
+        .tile_row(d2_tile_row),
+        .tile_col(d2_tile_col),
 
-        .tile_pixels(d2_tile_pixels),
-        .tile_valid_mask(d2_tile_valid_mask),
-        .lb_x(d2_lb_x),
-
-        .lb_addr(d3_lb_addr_draw),
-        .unaligned_pixels(d3_unaligned_pixels),
-        .unaligned_valid_mask(d3_unaligned_valid_mask),
-        .alignment_shift(d3_alignment_shift)
+        .tile_data(d3_tile_data)
     );
 
+    always_comb begin
+        d3_tile_pixels = {
+            5'h0, d3_tile_data[15:12],
+            5'h0, d3_tile_data[11:8],
+            5'h0, d3_tile_data[7:4],
+            5'h0, d3_tile_data[3:0]
+        };
+    end
+
     always_ff @(posedge clk_draw) begin
+        d3_lb_x <= d2_lb_x;
         d3_line <= d2_line;
         d3_bufsel <= d2_bufsel;
     end
 
+
     //////////////////////////////////////////////////////////////////////
-    // Draw cycle d4: Shift align the pixels
+    // Draw cycle d4: Double the pixels
     //////////////////////////////////////////////////////////////////////
 
-    logic [71:0]  d4_lb_colour_draw;
-    logic [7:0]   d4_lb_mask_draw;
     logic [8:0]   d4_lb_addr_draw;
+    logic [143:0] d4_unaligned_pixels;
+    logic [15:0]  d4_unaligned_valid_mask;
+    logic [2:0]   d4_alignment_shift;
+    logic         d4_line;
     logic         d4_bufsel;
 
-    shift_aligner shifter_inst (
+    pixel_doubler double_inst (
         .clk_draw,
         .rst_draw(d3_line),
 
-        .unaligned_pixels(d3_unaligned_pixels),
-        .unaligned_valid_mask(d3_unaligned_valid_mask),
-        .alignment_shift(d3_alignment_shift),
+        .tile_pixels(d3_tile_pixels),
+        .tile_valid_mask(d3_tile_valid_mask),
+        .lb_x(d3_lb_x),
 
-        .aligned_pixels(d4_lb_colour_draw),
-        .aligned_valid_mask(d4_lb_mask_draw)
+        .lb_addr(d4_lb_addr_draw),
+        .unaligned_pixels(d4_unaligned_pixels),
+        .unaligned_valid_mask(d4_unaligned_valid_mask),
+        .alignment_shift(d4_alignment_shift)
     );
 
     always_ff @(posedge clk_draw) begin
-        d4_lb_addr_draw <= d3_lb_addr_draw;
+        d4_line <= d3_line;
         d4_bufsel <= d3_bufsel;
     end
 
+    //////////////////////////////////////////////////////////////////////
+    // Draw cycle d5: Shift align the pixels
+    //////////////////////////////////////////////////////////////////////
+
+    logic [71:0]  d5_lb_colour_draw;
+    logic [7:0]   d5_lb_mask_draw;
+    logic [8:0]   d5_lb_addr_draw;
+    logic         d5_bufsel;
+
+    shift_aligner shifter_inst (
+        .clk_draw,
+        .rst_draw(d4_line),
+
+        .unaligned_pixels(d4_unaligned_pixels),
+        .unaligned_valid_mask(d4_unaligned_valid_mask),
+        .alignment_shift(d4_alignment_shift),
+
+        .aligned_pixels(d5_lb_colour_draw),
+        .aligned_valid_mask(d5_lb_mask_draw)
+    );
+
+    always_ff @(posedge clk_draw) begin
+        d5_lb_addr_draw <= d4_lb_addr_draw;
+        d5_bufsel <= d4_bufsel;
+    end
+
     ////////////////////////////////////////////////////////////////
-    // Draw cycle d5: Write to the line buffer
+    // Draw cycle d6: Write to the line buffer
     // Pix cycle p1: Read the line buffer
     ////////////////////////////////////////////////////////////////
 
@@ -245,7 +272,7 @@ module main #(parameter CORDW=11) ( // coordinate width
         .clk_draw,
 
         .buffsel_pix(x0_sy[0]),
-        .buffsel_draw(d4_bufsel),
+        .buffsel_draw(d5_bufsel),
 
         .addr_on_pix({1'd0,x0_sx}),
         .colour_on_pix(p1_colour_pix),
@@ -254,9 +281,9 @@ module main #(parameter CORDW=11) ( // coordinate width
         .we_on_draw(1'd0), // for now
         .colour_on_draw(72'd0), // for now
 
-        .addr_off_draw(d4_lb_addr_draw),
-        .we_off_draw(d4_lb_mask_draw),
-        .colour_off_draw(d4_lb_colour_draw)
+        .addr_off_draw(d5_lb_addr_draw),
+        .we_off_draw(d5_lb_mask_draw),
+        .colour_off_draw(d5_lb_colour_draw)
     );
 
     always_ff @(posedge clk_pix) begin

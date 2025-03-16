@@ -4,7 +4,6 @@
 // Gouldian_Finch_256x256_4b.png is public domain, photo by Bernard Spragg
 // I used Gimp to scale, crop and reduce it to 15 colors
 
-use hex;
 use image::{GenericImageView, Pixel};
 use std::fs::File;
 use std::io::Write;
@@ -14,6 +13,7 @@ fn main() {
     let img = image::open("imgconv/Gouldian_Finch_256x256_4b.png").unwrap();
 
     // Set up the output files.
+    let mut tile_map_file = File::create("rtl/tile_map.hex").unwrap();
     let mut pixel_file = File::create("rtl/tiles.hex").unwrap();
     let mut palette_file = File::create("rtl/palette.hex").unwrap();
 
@@ -24,10 +24,39 @@ fn main() {
     let mut pixel_line = String::new();
 
     // Ensure the first palette entry is black.
-    writeln!(&mut palette_file, "{}", "000000").unwrap();
+    writeln!(&mut palette_file, "000000").unwrap();
+
+    let tilemap_width = img.width() / 8;
+    let tilemap_height = img.height() / 8;
+    println!(
+        "tilemap width: {}, height: {}",
+        tilemap_width, tilemap_height,
+    );
+
+    // Image must be have a width and height that are multiples of the tile size
+    assert!(img.width() % 8 == 0);
+    assert!(img.height() % 8 == 0);
 
     // Loop through the pixels in the image.
-    for (_x, _y, pixel) in img.pixels() {
+    for (x, y, pixel) in img.pixels() {
+        let tilemap_x = x / 8;
+        let tilemap_y = y / 8;
+        let tile_x = x % 8;
+        let tile_y = y % 8;
+
+        if tile_x == 0 && tile_y == 0 {
+            if tilemap_x == 0 && y != 0 {
+                writeln!(&mut tile_map_file).unwrap();
+            }
+            // Write the tilemap entry to the file.
+            write!(
+                &mut tile_map_file,
+                "{:04x} ",
+                tilemap_y * tilemap_width + tilemap_x
+            )
+            .unwrap();
+        }
+
         // Convert the pixel to rgba.
         let rgba = pixel.to_rgba();
 

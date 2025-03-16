@@ -1,5 +1,6 @@
 VERILOG = ulx3s/pll.v rtl/vga.sv rtl/hdmi.v rtl/palette_bram.sv \
           rtl/linebuffer_bram.sv rtl/double_buffer.sv rtl/pixel_doubler.sv \
+		  rtl/tile_map_bram.sv \
 		  rtl/smoldvi.v rtl/smoldvi_clock_driver.v rtl/smoldvi_fast_gearbox.v \
 		  rtl/smoldvi_serializer.v rtl/smoldvi_tmds_encode.v \
 		  rtl/fpgacpu_ca/cdc_bit_synchronizer.sv rtl/fpgacpu_ca/pulse_generator.sv \
