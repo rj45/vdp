@@ -1,164 +1,443 @@
 // Written by GPT-4 with plain english prompts.... no idea how
 // copyright works in that case.
 //
-// Gouldian_Finch_256x256_4b.png is public domain, photo by Bernard Spragg
-// I used Gimp to scale, crop and reduce it to 15 colors
+// Gouldian_Finch_256x256.png is public domain photo by Bernard Spragg
 
-use image::{GenericImageView, Pixel};
-use std::collections::HashMap;
+#![feature(portable_simd)]
+
 use std::fs::File;
 use std::io::Write;
+use std::simd::num::SimdFloat;
+use std::simd::{LaneCount, Simd, StdFloat, SupportedLaneCount};
+
+use image::{GenericImageView, Pixel};
+use kmeans::{DistanceFunction, KMeans, KMeansConfig};
+use oklab::{srgb_to_oklab, Oklab};
+
+const JUST_NOTICEABLE_DIFFERENCE: f32 = 0.01;
+
+#[derive(Debug, Clone, Copy)]
+struct ColorFrequency {
+    color: Oklab,
+    frequency: usize,
+}
+
+impl Default for ColorFrequency {
+    fn default() -> Self {
+        ColorFrequency {
+            color: Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            },
+            frequency: 0,
+        }
+    }
+}
+
+fn oklab_delta_e(a: Oklab, b: Oklab) -> f32 {
+    // ΔL = L1 - L2
+    // C1 = √(a1² + b1²)
+    // C2 = √(a2² + b2²)
+    // ΔC = C1 - C2
+    // Δa = a1 - a2
+    // Δb = b1 - b2
+    // ΔH = √(Δa² + Δb² - ΔC²)
+    // ΔEOK = √(ΔL² + ΔC² + ΔH²)
+    let delta_l = a.l - b.l;
+    let c1 = (a.a * a.a + a.b * a.b).sqrt();
+    let c2 = (b.a * b.a + b.b * b.b).sqrt();
+    let delta_c = c1 - c2;
+    let delta_a = a.a - b.a;
+    let delta_b = a.b - b.b;
+    let delta_h = (delta_a * delta_a + delta_b * delta_b - delta_c * delta_c)
+        .abs()
+        .sqrt();
+    (delta_l * delta_l + delta_c * delta_c + delta_h * delta_h).sqrt()
+}
+
+fn extract_colors(tile: [Oklab; 64], threshold: f32, colors: &mut Vec<ColorFrequency>) {
+    for pixel in tile.iter() {
+        let mut found = false;
+        for item in colors.iter_mut() {
+            if oklab_delta_e(*pixel, item.color) < threshold {
+                item.frequency += 1;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            colors.push(ColorFrequency {
+                color: *pixel,
+                frequency: 1,
+            });
+        }
+    }
+    // sort by atan2(b, a) = hue
+    // colors.sort_by(|a, b| {
+    //     let a_hue = a.b.atan2(a.a);
+    //     let b_hue = b.b.atan2(b.a);
+    //     a_hue.partial_cmp(&b_hue).unwrap()
+    // });
+}
+
+struct OklabDistance;
+
+impl<const LANES: usize> DistanceFunction<f32, LANES> for OklabDistance
+where
+    LaneCount<LANES>: SupportedLaneCount,
+{
+    #[inline(always)]
+    fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        let one_third = a.len() / 3;
+
+        let a_l = a[0..one_third]
+            .chunks_exact(LANES)
+            .map(|i| Simd::from_slice(i));
+        let a_a = a[one_third..2 * one_third]
+            .chunks_exact(LANES)
+            .map(|i| Simd::from_slice(i));
+        let a_b = a[2 * one_third..]
+            .chunks_exact(LANES)
+            .map(|i| Simd::from_slice(i));
+
+        let b_l = b[0..one_third]
+            .chunks_exact(LANES)
+            .map(|i| Simd::from_slice(i));
+        let b_a = b[one_third..2 * one_third]
+            .chunks_exact(LANES)
+            .map(|i| Simd::from_slice(i));
+        let b_b = b[2 * one_third..]
+            .chunks_exact(LANES)
+            .map(|i| Simd::from_slice(i));
+
+        // ΔL = L1 - L2
+        // C1 = √(a1² + b1²)
+        // C2 = √(a2² + b2²)
+        // ΔC = C1 - C2
+        // Δa = a1 - a2
+        // Δb = b1 - b2
+        // ΔH = √(|Δa² + Δb² - ΔC²|)
+        // ΔEOK = √(ΔL² + ΔC² + ΔH²)
+
+        let delta_l = a_l.zip(b_l).map(|(a_l, b_l)| a_l - b_l);
+        let c1 = a_a
+            .clone()
+            .zip(a_b.clone())
+            .map(|(a_a, a_b)| (a_a * a_a + a_b * a_b).sqrt());
+        let c2 = b_a
+            .clone()
+            .zip(b_b.clone())
+            .map(|(b_a, b_b)| (b_a * b_a + b_b * b_b).sqrt());
+        let delta_c = c1.zip(c2).map(|(c1, c2)| c1 - c2);
+        let delta_a = a_a.zip(b_a).map(|(a_a, b_a)| a_a - b_a);
+        let delta_b = a_b.zip(b_b).map(|(a_b, b_b)| a_b - b_b);
+        let sum_delta_a_b = delta_a
+            .zip(delta_b)
+            .map(|(delta_a, delta_b)| delta_a * delta_a + delta_b * delta_b);
+        let delta_h = sum_delta_a_b
+            .zip(delta_c.clone())
+            .map(|(sum_delta_a_b, delta_c)| (sum_delta_a_b - delta_c * delta_c).abs().sqrt());
+        let sum_delta_l_c = delta_l
+            .zip(delta_c)
+            .map(|(delta_l, delta_c)| delta_l * delta_l + delta_c * delta_c);
+        let delta_e = sum_delta_l_c
+            .zip(delta_h)
+            .map(|(sum_delta_l_c, delta_h)| (sum_delta_l_c + delta_h * delta_h).sqrt());
+        delta_e.map(|e| e.reduce_sum()).sum()
+    }
+}
 
 fn main() {
     // Read the PNG file.
-    let img = image::open("imgconv/Gouldian_Finch_256x256_4b.png").unwrap();
+    let img = image::open("imgconv/Gouldian_Finch_256x256.png").unwrap();
 
-    // Set up the output files.
-    let mut tile_map_file = File::create("rtl/tile_map.hex").unwrap();
-    let mut tile_data_file = File::create("rtl/tiles.hex").unwrap();
-    let mut palette_file = File::create("rtl/palette.hex").unwrap();
-
-    // Set up the color palette.
-    let mut color_palette: Vec<String> = Vec::new();
-
-    // A buffer for storing the hex string to be written to the pixel file.
-    let mut pixel_line = String::new();
-
-    // Ensure the first palette entry is black.
-    writeln!(&mut palette_file, "000000").unwrap();
-
-    let tilemap_width = img.width() / 8;
-    let tilemap_height = img.height() / 8;
+    let tile_map_width = img.width() / 8;
+    let tile_map_height = img.height() / 8;
     println!(
-        "tilemap width: {}, height: {}",
-        tilemap_width, tilemap_height,
+        "tile_map width: {}, height: {}",
+        tile_map_width, tile_map_height,
     );
 
     // Image must be have a width and height that are multiples of the tile size
     assert!(img.width() % 8 == 0);
     assert!(img.height() % 8 == 0);
 
-    let mut tiles: Vec<[u16; 16]> =
-        Vec::with_capacity(tilemap_width as usize * tilemap_height as usize);
-    for _ in 0..tilemap_width * tilemap_height {
-        tiles.push([0; 16]);
+    let mut tiles: Vec<[Oklab; 64]> =
+        Vec::with_capacity((tile_map_width * tile_map_height) as usize);
+    for _ in 0..(tile_map_width * tile_map_height) {
+        let tile: [Oklab; 64] = [Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+        }; 64];
+        tiles.push(tile);
     }
 
-    // Loop through the pixels in the image and generate tiles.
+    // Loop through the pixels in the image, split into 8x8 tiles and convert to oklab.
     for (x, y, pixel) in img.pixels() {
-        let tilemap_x = x / 8;
-        let tilemap_y = y / 8;
+        let tile_map_x = x / 8;
+        let tile_map_y = y / 8;
         let tile_x = x % 8;
         let tile_y = y % 8;
 
-        // Convert the pixel to rgba.
-        let rgba = pixel.to_rgba();
+        // Convert the pixel to oklab.
+        let channels = pixel.channels();
+        let oklab = srgb_to_oklab(oklab::Rgb {
+            r: channels[0],
+            g: channels[1],
+            b: channels[2],
+        });
 
-        // Convert the RGB part to a hex string.
-        let pixel_hex = hex::encode(&rgba.channels()[0..3]);
+        // Store the oklab value in the tile.
+        let tile_index = (tile_map_y * tile_map_width + tile_map_x) as usize;
+        tiles[tile_index][(tile_y * 8 + tile_x) as usize] = oklab;
+    }
 
-        // If the color is not already in the palette, add it.
-        let color_index = match color_palette.iter().position(|x| *x == pixel_hex) {
-            Some(index) => index,
-            None => {
-                let channels = rgba.channels();
-                let (r, g, b) = (
-                    (channels[0] >> 1) as i16,
-                    (channels[1] >> 1) as i16,
-                    (channels[2] >> 1) as i16,
-                );
+    let mut cluster_data = Vec::new();
+    for tile in tiles.iter() {
+        let mut hue_sorted = *tile;
+        hue_sorted.sort_by(|a, b| {
+            let a_hue = a.b.atan2(a.a);
+            let b_hue = b.b.atan2(b.a);
+            a_hue.partial_cmp(&b_hue).unwrap()
+        });
 
-                let co = r.wrapping_sub(b);
-                let tmp = b.wrapping_add(co >> 1);
-                let cg = g.wrapping_sub(tmp);
-                let y = tmp.wrapping_add(cg >> 1);
-
-                let tmp = y.wrapping_sub(cg >> 1);
-                let g2 = cg.wrapping_add(tmp);
-                let b2 = tmp.wrapping_sub(co >> 1);
-                let r2 = b2.wrapping_add(co);
-
-                // Print the pixel values.
-                println!(
-                    "rgb({},{},{}) rgb2({},{},{}) co: {}, cg: {}, y: {}",
-                    r, g, b, r2, g2, b2, co, cg, y
-                );
-
-                color_palette.push(pixel_hex.clone());
-
-                let pixel_hex = hex::encode([y as u8, co as u8, cg as u8]);
-
-                // Write the palette color to the file.
-                writeln!(&mut palette_file, "{}", pixel_hex).unwrap();
-                color_palette.len() - 1
+        // store every permutation of the tile in the cluster data
+        for offset in 0..64 {
+            for i in 0..64 {
+                cluster_data.push(hue_sorted[(i + offset) % 64].l);
             }
-        };
-
-        let tile = tiles
-            .get_mut(tilemap_y as usize * tilemap_width as usize + tilemap_x as usize)
-            .unwrap();
-        let tile_index = (tile_y * 2 + tile_x / 4) as usize;
-        tile[tile_index] |= ((color_index + 1) << ((3 - (tile_x % 4)) * 4)) as u16;
+        }
+        for offset in 0..64 {
+            for i in 0..64 {
+                cluster_data.push(hue_sorted[(i + offset) % 64].a);
+            }
+        }
+        for offset in 0..64 {
+            for i in 0..64 {
+                cluster_data.push(hue_sorted[(i + offset) % 64].b);
+            }
+        }
     }
 
-    // Deduplicate tiles
-    let mut dupe_tile_count = 0;
-    let mut tile_data_dedup_map: HashMap<[u16; 16], u16> = HashMap::new();
-    let mut tile_dedupe_map: HashMap<u16, u16> = HashMap::new();
-    let mut deduped_tiles: Vec<[u16; 16]> = Vec::new();
-    for (i, tile) in tiles.iter().enumerate() {
-        let index = if let Some(&index) = tile_data_dedup_map.get(tile) {
-            println!("tile {} == tile {}", i, index);
-            dupe_tile_count += 1;
-            index
-        } else {
-            let index = deduped_tiles.len() as u16;
-            deduped_tiles.push(*tile);
-            tile_data_dedup_map.insert(*tile, index);
-
-            index
-        };
-        tile_dedupe_map.insert(i as u16, index);
-    }
-    println!(
-        "dupe tile count: {} unique tile count: {}",
-        dupe_tile_count,
-        tile_data_dedup_map.len()
+    let kmean: KMeans<_, 4, _> = KMeans::new(cluster_data, tiles.len(), 64 * 64 * 3, OklabDistance);
+    let result = kmean.kmeans_minibatch(
+        8,
+        32,
+        100,
+        KMeans::init_random_sample,
+        &KMeansConfig::default(),
     );
 
-    // Write the tile map to the file.
-    for y in 0..tilemap_height {
-        for x in 0..tilemap_width {
-            let index = tile_dedupe_map
-                .get(&((y * tilemap_width + x) as u16))
-                .unwrap_or_else(|| panic!("tile {} not found", y * tilemap_width + x));
-            write!(&mut tile_map_file, "{:04x} ", index).unwrap();
+    let mut colors = Vec::new();
+    for _ in 0..32 {
+        colors.push(Vec::new());
+    }
+    for y in 0..32 {
+        for x in 0..32 {
+            let tile_index = y * 32 + x;
+            let assignment = result.assignments[tile_index];
+            extract_colors(
+                tiles[tile_index],
+                JUST_NOTICEABLE_DIFFERENCE,
+                &mut colors[assignment],
+            );
         }
-        writeln!(&mut tile_map_file).unwrap();
     }
 
-    // Write the deduped tiles to the file.
-    for grid_y in 0..tilemap_height {
-        for y in 0..8 {
-            for grid_x in 0..tilemap_width {
-                let tile = deduped_tiles
-                    .get(grid_y as usize * tilemap_width as usize + grid_x as usize)
-                    .copied()
-                    .unwrap_or_default();
-                write!(
-                    &mut tile_data_file,
-                    "{:04x} {:04x} ",
-                    tile[y * 2],
-                    tile[y * 2 + 1]
-                )
-                .unwrap();
+    let mut palettes = Vec::new();
+    let mut min_colors = usize::MAX;
+    let mut max_colors = 0;
+    for color_frequencies in colors.iter_mut() {
+        let num_colors = color_frequencies.len();
+        if num_colors < min_colors {
+            min_colors = num_colors;
+        }
+        if num_colors > max_colors {
+            max_colors = num_colors;
+        }
+        color_frequencies.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        color_frequencies.reverse();
+
+        if color_frequencies.len() > 16 {
+            // do kmeans on the colors to reduce them to 16
+            let mut cluster_data = Vec::new();
+            for color_frequency in color_frequencies.iter() {
+                cluster_data.push(color_frequency.color.l);
+                cluster_data.push(color_frequency.color.a);
+                cluster_data.push(color_frequency.color.b);
             }
-            writeln!(&mut tile_data_file).unwrap();
+            let kmean: KMeans<_, 1, _> =
+                KMeans::new(cluster_data, color_frequencies.len(), 3, OklabDistance);
+            let result = kmean.kmeans_minibatch(
+                8,
+                16,
+                10000,
+                KMeans::init_random_sample,
+                &KMeansConfig::default(),
+            );
+            let mut new_colors = [ColorFrequency::default(); 16];
+            for (i, color) in color_frequencies.iter().enumerate() {
+                let assignment = result.assignments[i];
+                new_colors[assignment].color.l += color.color.l * color.frequency as f32;
+                new_colors[assignment].color.a += color.color.a * color.frequency as f32;
+                new_colors[assignment].color.b += color.color.b * color.frequency as f32;
+                new_colors[assignment].frequency += color.frequency;
+            }
+            for color in new_colors.iter_mut() {
+                color.color.l /= color.frequency as f32;
+                assert!(!color.color.l.is_nan());
+                color.color.a /= color.frequency as f32;
+                assert!(!color.color.a.is_nan());
+                color.color.b /= color.frequency as f32;
+                assert!(!color.color.b.is_nan());
+            }
+            let mut total_error = 0.0;
+            for (i, color) in color_frequencies.iter().enumerate() {
+                let assignment = result.assignments[i];
+                let error = oklab_delta_e(color.color, new_colors[assignment].color)
+                    * color.frequency as f32;
+                assert!(!error.is_nan());
+                total_error += error;
+            }
+            println!("Error: {} {}", result.distsum, total_error);
+            palettes.push(new_colors.to_vec());
+        } else {
+            println!("A palette with {} colors", color_frequencies.len());
+            palettes.push(color_frequencies.clone());
+        }
+    }
+    println!("min_colors: {}, max_colors: {}", min_colors, max_colors);
+
+    let mut max_tile_error = 0.0;
+    let mut tile_palette = Vec::new();
+    for y in 0..32 {
+        for x in 0..32 {
+            let tile_index = y * 32 + x;
+            // find which palette has the least error
+            let mut min_error = f32::MAX;
+            let mut min_palette = 0;
+            for (i, palette) in palettes.iter().enumerate() {
+                let mut error = 0.0;
+                for color in tiles[tile_index].iter() {
+                    let mut min_delta_e = f32::MAX;
+                    for palette_color in palette.iter() {
+                        let delta_e = oklab_delta_e(*color, palette_color.color);
+                        if delta_e < min_delta_e {
+                            min_delta_e = delta_e;
+                        }
+                    }
+                    error += min_delta_e;
+                }
+                if error < min_error {
+                    min_error = error;
+                    min_palette = i;
+                }
+            }
+            tile_palette.push(min_palette);
+            if min_error > max_tile_error {
+                max_tile_error = min_error;
+            }
         }
     }
 
-    // Fill the rest of the palette file with "000000" until it has 256 entries.
-    for _ in (color_palette.len() + 1)..256 {
-        writeln!(&mut palette_file, "000000").unwrap();
+    println!("max_tile_error: {}", max_tile_error / 32.0 / 32.0);
+
+    let mut palette_file = File::create("rtl/palette.hex").unwrap();
+
+    for palette in palettes.iter() {
+        for color in palette.iter() {
+            let rgb = oklab::oklab_to_srgb(color.color);
+            write!(
+                &mut palette_file,
+                "{:02x}{:02x}{:02x} ",
+                rgb.r, rgb.g, rgb.b
+            )
+            .unwrap();
+        }
+        for _ in palette.len()..16 {
+            write!(&mut palette_file, "000000 ").unwrap();
+        }
+        writeln!(&mut palette_file).unwrap();
     }
+
+    let mut out_tiles = Vec::new();
+    let mut out_tile_map = Vec::new();
+    for y in 0..32 {
+        for x in 0..32 {
+            let tile_index = y * 32 + x;
+            let palette = &palettes[tile_palette[tile_index]];
+            let mut out_tile = [0u16; 16];
+            for (i, color) in tiles[tile_index].iter().enumerate() {
+                let mut min_delta_e = f32::MAX;
+                let mut min_index = 0;
+                for (j, palette_color) in palette.iter().enumerate() {
+                    let delta_e = oklab_delta_e(*color, palette_color.color);
+                    if delta_e < min_delta_e {
+                        min_delta_e = delta_e;
+                        min_index = j;
+                    }
+                }
+                out_tile[i / 4] |= (min_index as u16) << ((i % 4) * 4);
+            }
+            let index = out_tiles
+                .iter()
+                .position(|&tile| tile == out_tile)
+                .unwrap_or_else(|| {
+                    out_tiles.push(out_tile);
+                    out_tiles.len() - 1
+                });
+            out_tile_map.push(((tile_palette[tile_index] << 10) | index) as u16);
+        }
+    }
+    println!("out_tiles: {}", out_tiles.len());
+
+    let mut tile_map_file = File::create("rtl/tile_map.hex").unwrap();
+    let mut tile_data_file = File::create("rtl/tiles.hex").unwrap();
+    for tile in out_tiles.iter() {
+        for &item in tile.iter() {
+            write!(&mut tile_data_file, "{:04x} ", item).unwrap();
+        }
+        writeln!(&mut tile_data_file).unwrap();
+    }
+    for _ in out_tiles.len()..1024 {
+        for _ in 0..16 {
+            write!(&mut tile_data_file, "0000 ").unwrap();
+        }
+        writeln!(&mut tile_data_file).unwrap();
+    }
+    for (i, item) in out_tile_map.iter().enumerate() {
+        write!(&mut tile_map_file, "{:04x} ", item).unwrap();
+        if i % 32 == 31 {
+            writeln!(&mut tile_map_file).unwrap();
+        }
+    }
+
+    let mut out_img = image::ImageBuffer::new(256, 256);
+    for y in 0..32 {
+        for x in 0..32 {
+            let tile_index = y * 32 + x;
+            let palette = &palettes[tile_palette[tile_index]];
+            for (i, color) in tiles[tile_index].iter().enumerate() {
+                let mut min_delta_e = f32::MAX;
+                let mut min_index = 0;
+                for (j, palette_color) in palette.iter().enumerate() {
+                    let delta_e = oklab_delta_e(*color, palette_color.color);
+                    if delta_e < min_delta_e {
+                        min_delta_e = delta_e;
+                        min_index = j;
+                    }
+                }
+                let palette_color = palette[min_index].color;
+                let rgb = oklab::oklab_to_srgb(palette_color);
+                out_img.put_pixel(
+                    (x * 8 + i % 8) as u32,
+                    (y * 8 + i / 8) as u32,
+                    image::Rgb([rgb.r, rgb.g, rgb.b]),
+                );
+            }
+        }
+    }
+    out_img.save("imgconv/out.png").unwrap();
 }

@@ -16,8 +16,9 @@
 
 module tile_bram #(parameter FILENAME="") (
   input  logic        clk_draw,
-  input  logic [4:0]  tile_y,
-  input  logic [4:0]  tile_x,
+//   input  logic [4:0]  tile_y,
+//   input  logic [4:0]  tile_x,
+  input  logic [9:0] tile_index,
   input  logic [2:0]  tile_row,
   input  logic        tile_col,
   output logic [15:0] tile_data
@@ -33,8 +34,9 @@ module tile_bram #(parameter FILENAME="") (
 
     always_ff @(posedge clk_draw) begin
         tile_data <= rom[{
-            tile_y, tile_row,  // y index of the row
-            tile_x, tile_col   // x position of the tile pixels
+            // tile_y, tile_row,  // y index of the row
+            // tile_x, tile_col   // x position of the tile pixels
+            tile_index, tile_row, tile_col
         }];
     end
 
