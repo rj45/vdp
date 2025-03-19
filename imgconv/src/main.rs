@@ -14,7 +14,7 @@ use image::{GenericImageView, Pixel};
 use kmeans::{DistanceFunction, KMeans, KMeansConfig};
 use oklab::{srgb_to_oklab, Oklab};
 
-const JUST_NOTICEABLE_DIFFERENCE: f32 = 0.01;
+const JUST_NOTICEABLE_DIFFERENCE: f32 = 0.005;
 
 #[derive(Debug, Clone, Copy)]
 struct ColorFrequency {
@@ -42,7 +42,7 @@ fn oklab_delta_e(a: Oklab, b: Oklab) -> f32 {
     // ΔC = C1 - C2
     // Δa = a1 - a2
     // Δb = b1 - b2
-    // ΔH = √(Δa² + Δb² - ΔC²)
+    // ΔH = √(|Δa² + Δb² - ΔC²|)
     // ΔEOK = √(ΔL² + ΔC² + ΔH²)
     let delta_l = a.l - b.l;
     let c1 = (a.a * a.a + a.b * a.b).sqrt();
@@ -73,12 +73,6 @@ fn extract_colors(tile: [Oklab; 64], threshold: f32, colors: &mut Vec<ColorFrequ
             });
         }
     }
-    // sort by atan2(b, a) = hue
-    // colors.sort_by(|a, b| {
-    //     let a_hue = a.b.atan2(a.a);
-    //     let b_hue = b.b.atan2(b.a);
-    //     a_hue.partial_cmp(&b_hue).unwrap()
-    // });
 }
 
 struct OklabDistance;
@@ -89,25 +83,22 @@ where
 {
     #[inline(always)]
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        let one_third = a.len() / 3;
+        let a_len = a.len() / 3;
+        let b_len = b.len() / 3;
 
-        let a_l = a[0..one_third]
+        let a_l = a[0..a_len].chunks_exact(LANES).map(|i| Simd::from_slice(i));
+        let a_a = a[a_len..2 * a_len]
             .chunks_exact(LANES)
             .map(|i| Simd::from_slice(i));
-        let a_a = a[one_third..2 * one_third]
-            .chunks_exact(LANES)
-            .map(|i| Simd::from_slice(i));
-        let a_b = a[2 * one_third..]
+        let a_b = a[2 * a_len..]
             .chunks_exact(LANES)
             .map(|i| Simd::from_slice(i));
 
-        let b_l = b[0..one_third]
+        let b_l = b[0..b_len].chunks_exact(LANES).map(|i| Simd::from_slice(i));
+        let b_a = b[b_len..2 * b_len]
             .chunks_exact(LANES)
             .map(|i| Simd::from_slice(i));
-        let b_a = b[one_third..2 * one_third]
-            .chunks_exact(LANES)
-            .map(|i| Simd::from_slice(i));
-        let b_b = b[2 * one_third..]
+        let b_b = b[2 * b_len..]
             .chunks_exact(LANES)
             .map(|i| Simd::from_slice(i));
 
@@ -221,12 +212,11 @@ fn main() {
         }
     }
 
-    let kmean: KMeans<_, 4, _> = KMeans::new(cluster_data, tiles.len(), 64 * 64 * 3, OklabDistance);
-    let result = kmean.kmeans_minibatch(
-        8,
+    let kmean: KMeans<_, 8, _> = KMeans::new(cluster_data, tiles.len(), 64 * 64 * 3, OklabDistance);
+    let result = kmean.kmeans_lloyd(
         32,
-        100,
-        KMeans::init_random_sample,
+        10000,
+        KMeans::init_kmeanplusplus,
         &KMeansConfig::default(),
     );
 
@@ -270,11 +260,10 @@ fn main() {
             }
             let kmean: KMeans<_, 1, _> =
                 KMeans::new(cluster_data, color_frequencies.len(), 3, OklabDistance);
-            let result = kmean.kmeans_minibatch(
-                8,
+            let result = kmean.kmeans_lloyd(
                 16,
-                10000,
-                KMeans::init_random_sample,
+                100000,
+                KMeans::init_kmeanplusplus,
                 &KMeansConfig::default(),
             );
             let mut new_colors = [ColorFrequency::default(); 16];
@@ -293,6 +282,7 @@ fn main() {
                 color.color.b /= color.frequency as f32;
                 assert!(!color.color.b.is_nan());
             }
+            new_colors.sort_by(|a, b| a.color.l.partial_cmp(&b.color.l).unwrap());
             let mut total_error = 0.0;
             for (i, color) in color_frequencies.iter().enumerate() {
                 let assignment = result.assignments[i];
@@ -305,10 +295,16 @@ fn main() {
             palettes.push(new_colors.to_vec());
         } else {
             println!("A palette with {} colors", color_frequencies.len());
+            color_frequencies.sort_by(|a, b| a.color.l.partial_cmp(&b.color.l).unwrap());
             palettes.push(color_frequencies.clone());
         }
     }
     println!("min_colors: {}, max_colors: {}", min_colors, max_colors);
+    palettes.sort_by(|a, b| {
+        let a_avg_l = a.iter().map(|color| color.color.l).sum::<f32>() / a.len() as f32;
+        let b_avg_l = b.iter().map(|color| color.color.l).sum::<f32>() / b.len() as f32;
+        a_avg_l.partial_cmp(&b_avg_l).unwrap()
+    });
 
     let mut max_tile_error = 0.0;
     let mut tile_palette = Vec::new();
@@ -362,25 +358,115 @@ fn main() {
         writeln!(&mut palette_file).unwrap();
     }
 
+    let mut quantized_tiles = Vec::new();
+    let mut error = Vec::new();
+    for _ in 0..32 {
+        for _ in 0..32 {
+            quantized_tiles.push([0u16; 16]);
+            for _ in 0..64 {
+                error.push(Oklab {
+                    l: 0.0,
+                    a: 0.0,
+                    b: 0.0,
+                });
+            }
+        }
+    }
+    for y in 0..32 {
+        for ty in 0..8 {
+            for x in 0..32 {
+                let tile_index = y * 32 + x;
+                let palette = &palettes[tile_palette[tile_index]];
+                let out_tile = quantized_tiles.get_mut(tile_index).unwrap();
+                let tile = tiles.get(tile_index).unwrap();
+                for tx in 0..8 {
+                    let i = (ty * 8) + tx;
+                    let gy = (y * 8) + ty;
+                    let gx = (x * 8) + tx;
+                    let color = Oklab {
+                        l: tile[i].l + error[gy * 256 + gx].l,
+                        a: tile[i].a + error[gy * 256 + gx].a,
+                        b: tile[i].b + error[gy * 256 + gx].b,
+                    };
+                    let mut min_delta_e = f32::MAX;
+                    let mut min_index = 0;
+                    for (j, palette_color) in palette.iter().enumerate() {
+                        let delta_e = oklab_delta_e(color, palette_color.color);
+                        if delta_e < min_delta_e {
+                            min_delta_e = delta_e;
+                            min_index = j;
+                        }
+                    }
+                    out_tile[i / 4] |= (min_index as u16) << ((i % 4) * 4);
+
+                    // apply sierra dithering
+                    let diff = Oklab {
+                        l: ((color.l - palette[min_index].color.l) / 32.0) * 0.75,
+                        a: ((color.a - palette[min_index].color.a) / 32.0) * 0.75,
+                        b: ((color.b - palette[min_index].color.b) / 32.0) * 0.75,
+                    };
+
+                    if gx < 255 {
+                        error[gy * 256 + gx + 1].l += diff.l * 5.0;
+                        error[gy * 256 + gx + 1].a += diff.a * 5.0;
+                        error[gy * 256 + gx + 1].b += diff.b * 5.0;
+                    }
+                    if gx < 254 {
+                        error[gy * 256 + gx + 2].l += diff.l * 3.0;
+                        error[gy * 256 + gx + 2].a += diff.a * 3.0;
+                        error[gy * 256 + gx + 2].b += diff.b * 3.0;
+                    }
+                    if gy < 255 {
+                        if gx > 1 {
+                            error[(gy + 1) * 256 + gx - 2].l += diff.l * 2.0;
+                            error[(gy + 1) * 256 + gx - 2].a += diff.a * 2.0;
+                            error[(gy + 1) * 256 + gx - 2].b += diff.b * 2.0;
+                        }
+                        if gx > 0 {
+                            error[(gy + 1) * 256 + gx - 1].l += diff.l * 4.0;
+                            error[(gy + 1) * 256 + gx - 1].a += diff.a * 4.0;
+                            error[(gy + 1) * 256 + gx - 1].b += diff.b * 4.0;
+                        }
+                        error[(gy + 1) * 256 + gx].l += diff.l * 5.0;
+                        error[(gy + 1) * 256 + gx].a += diff.a * 5.0;
+                        error[(gy + 1) * 256 + gx].b += diff.b * 5.0;
+                        if gx < 255 {
+                            error[(gy + 1) * 256 + gx + 1].l += diff.l * 4.0;
+                            error[(gy + 1) * 256 + gx + 1].a += diff.a * 4.0;
+                            error[(gy + 1) * 256 + gx + 1].b += diff.b * 4.0;
+                        }
+                        if gx < 254 {
+                            error[(gy + 1) * 256 + gx + 2].l += diff.l * 2.0;
+                            error[(gy + 1) * 256 + gx + 2].a += diff.a * 2.0;
+                            error[(gy + 1) * 256 + gx + 2].b += diff.b * 2.0;
+                        }
+                    }
+                    if gy < 254 {
+                        if gx > 0 {
+                            error[(gy + 2) * 256 + gx - 1].l += diff.l * 2.0;
+                            error[(gy + 2) * 256 + gx - 1].a += diff.a * 2.0;
+                            error[(gy + 2) * 256 + gx - 1].b += diff.b * 2.0;
+                        }
+                        error[(gy + 2) * 256 + gx].l += diff.l * 3.0;
+                        error[(gy + 2) * 256 + gx].a += diff.a * 3.0;
+                        error[(gy + 2) * 256 + gx].b += diff.b * 3.0;
+                        if gx < 255 {
+                            error[(gy + 2) * 256 + gx + 1].l += diff.l * 2.0;
+                            error[(gy + 2) * 256 + gx + 1].a += diff.a * 2.0;
+                            error[(gy + 2) * 256 + gx + 1].b += diff.b * 2.0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut out_tiles = Vec::new();
     let mut out_tile_map = Vec::new();
     for y in 0..32 {
         for x in 0..32 {
             let tile_index = y * 32 + x;
-            let palette = &palettes[tile_palette[tile_index]];
-            let mut out_tile = [0u16; 16];
-            for (i, color) in tiles[tile_index].iter().enumerate() {
-                let mut min_delta_e = f32::MAX;
-                let mut min_index = 0;
-                for (j, palette_color) in palette.iter().enumerate() {
-                    let delta_e = oklab_delta_e(*color, palette_color.color);
-                    if delta_e < min_delta_e {
-                        min_delta_e = delta_e;
-                        min_index = j;
-                    }
-                }
-                out_tile[i / 4] |= (min_index as u16) << ((i % 4) * 4);
-            }
+            let out_tile = quantized_tiles[tile_index];
             let index = out_tiles
                 .iter()
                 .position(|&tile| tile == out_tile)
@@ -417,25 +503,21 @@ fn main() {
     let mut out_img = image::ImageBuffer::new(256, 256);
     for y in 0..32 {
         for x in 0..32 {
-            let tile_index = y * 32 + x;
-            let palette = &palettes[tile_palette[tile_index]];
-            for (i, color) in tiles[tile_index].iter().enumerate() {
-                let mut min_delta_e = f32::MAX;
-                let mut min_index = 0;
-                for (j, palette_color) in palette.iter().enumerate() {
-                    let delta_e = oklab_delta_e(*color, palette_color.color);
-                    if delta_e < min_delta_e {
-                        min_delta_e = delta_e;
-                        min_index = j;
-                    }
+            let map_entry = out_tile_map[y * 32 + x];
+            let tile_index = (map_entry & 1023) as usize;
+            let tile_pal = ((map_entry >> 10) as usize) & 31;
+            let palette = &palettes[tile_pal];
+            for (i, color) in out_tiles[tile_index].iter().enumerate() {
+                for si in 0..4 {
+                    let min_index = ((*color >> (si * 4)) & 15) as usize;
+                    let palette_color = palette[min_index].color;
+                    let rgb = oklab::oklab_to_srgb(palette_color);
+                    out_img.put_pixel(
+                        (x * 8 + ((i % 2) * 4) + si) as u32,
+                        ((y * 8) + (i / 2)) as u32,
+                        image::Rgb([rgb.r, rgb.g, rgb.b]),
+                    );
                 }
-                let palette_color = palette[min_index].color;
-                let rgb = oklab::oklab_to_srgb(palette_color);
-                out_img.put_pixel(
-                    (x * 8 + i % 8) as u32,
-                    (y * 8 + i / 8) as u32,
-                    image::Rgb([rgb.r, rgb.g, rgb.b]),
-                );
             }
         }
     }
