@@ -1,12 +1,55 @@
+//! Image conversion module for converting images to tiles and palettes
+//!
+//! This module handles the conversion of images to tiles, palettes, and tilemaps
+//! for use in graphics hardware or software.
+
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, Write};
 
 use image::{GenericImageView, Pixel};
 use kmeans::{KMeans, KMeansConfig};
-use oklab::{self, oklab_to_srgb, srgb_to_oklab, Rgb};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-use crate::color::{oklab_delta_e, ColorFrequency, Oklab, OklabDistance};
+use crate::color::{find_similar_color, oklab_delta_e, ColorFrequency, Oklab, OklabDistance};
+
+// Constants to replace magic numbers
+/// Number of bits per color index in output tile data
+const BITS_PER_COLOR: usize = 4;
+/// Number of pixels per u16 chunk in output tile data (16 bits / 4 bits per pixel)
+const PIXELS_PER_CHUNK: usize = 16 / BITS_PER_COLOR;
+/// Divisor used for dithering error calculation
+const DITHER_ERROR_DIVISOR: f32 = 32.0;
+/// Maximum number of k-means iterations for palette generation
+const KMEANS_MAX_ITERATIONS: usize = 10000;
+/// Maximum number of k-means iterations for color reduction
+const COLOR_REDUCTION_MAX_ITERATIONS: usize = 100000;
+/// Number of u16 chunks per row in output file
+const CHUNKS_PER_ROW: usize = 2;
+/// Bit position for palette index in tilemap entry
+const PALETTE_INDEX_SHIFT: usize = 10;
+
+/// Errors that can occur during image conversion
+#[derive(Error, Debug)]
+pub enum ConversionError {
+    #[error("Image dimensions {0}x{1} are not multiples of tile size {2}x{3}")]
+    InvalidDimensions(u32, u32, u32, u32),
+
+    #[error("Image dimensions {0}x{1} don't match expected {2}x{3} based on tilemap size")]
+    DimensionMismatch(u32, u32, u32, u32),
+
+    #[error("Failed to read image: {0}")]
+    ImageReadError(#[from] image::ImageError),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("Error generating palettes: {0}")]
+    PaletteGeneration(String),
+}
 
 /// Configuration for the image conversion process
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +108,33 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Get total number of tiles in the tilemap
+    pub fn total_tiles(&self) -> usize {
+        (self.tilemap_width * self.tilemap_height) as usize
+    }
+
+    /// Get the number of pixels in a single tile
+    pub fn tile_size(&self) -> usize {
+        (self.tile_width * self.tile_height) as usize
+    }
+
+    /// Get the total width in pixels
+    pub fn total_width(&self) -> u32 {
+        self.tilemap_width * self.tile_width
+    }
+
+    /// Get the total height in pixels
+    pub fn total_height(&self) -> u32 {
+        self.tilemap_height * self.tile_height
+    }
+
+    /// Get the number of chunks needed per tile
+    pub fn chunks_per_tile(&self) -> usize {
+        self.tile_size().div_ceil(PIXELS_PER_CHUNK)
+    }
+}
+
 /// Represents an entire tilemap with all its data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TilemapData {
@@ -87,6 +157,39 @@ pub struct Palette {
     pub colors: Vec<ColorFrequency>,
 }
 
+impl Palette {
+    /// Find the best matching color index for the given color
+    pub fn find_best_color(&self, color: Oklab) -> usize {
+        let mut min_delta_e = f32::MAX;
+        let mut min_index = 0;
+
+        for (i, palette_color) in self.colors.iter().enumerate() {
+            let delta_e = oklab_delta_e(color, palette_color.color);
+            if delta_e < min_delta_e {
+                min_delta_e = delta_e;
+                min_index = i;
+            }
+        }
+
+        min_index
+    }
+
+    /// Calculate the average luminance of colors in this palette
+    pub fn average_luminance(&self) -> f32 {
+        if self.colors.is_empty() {
+            return 0.0;
+        }
+
+        self.colors.iter().map(|c| c.color.l).sum::<f32>() / self.colors.len() as f32
+    }
+
+    /// Sort colors by luminance
+    pub fn sort_by_luminance(&mut self) {
+        self.colors
+            .sort_by(|a, b| a.color.l.partial_cmp(&b.color.l).unwrap());
+    }
+}
+
 /// Represents a tilemap entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TilemapEntry {
@@ -95,21 +198,24 @@ pub struct TilemapEntry {
     pub raw_value: u16,
 }
 
+impl TilemapEntry {
+    /// Create a new tilemap entry with the given palette index
+    pub fn new(palette_index: usize, tile_index: usize) -> Self {
+        TilemapEntry {
+            palette_index,
+            tile_index,
+            raw_value: (palette_index << PALETTE_INDEX_SHIFT) as u16,
+        }
+    }
+}
+
+/// Extract unique colors from a tile into a color frequency list
 fn extract_colors(tile: &[Oklab], threshold: f32, colors: &mut Vec<ColorFrequency>) {
     for pixel in tile.iter() {
-        let mut found = false;
-        for item in colors.iter_mut() {
-            if oklab_delta_e(*pixel, item.color) < threshold {
-                item.frequency += 1;
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            colors.push(ColorFrequency {
-                color: *pixel,
-                frequency: 1,
-            });
+        if let Some(index) = find_similar_color(*pixel, colors, threshold) {
+            colors[index].frequency += 1;
+        } else {
+            colors.push(ColorFrequency::new(*pixel, 1));
         }
     }
 }
@@ -120,12 +226,13 @@ pub struct ImageConverter {
 }
 
 impl ImageConverter {
+    /// Create a new image converter with the given configuration
     pub fn new(config: Config) -> Self {
         ImageConverter { config }
     }
 
     /// Main execution function to run the entire conversion process
-    pub fn convert(&self) -> Result<TilemapData, Box<dyn std::error::Error>> {
+    pub fn convert(&self) -> Result<TilemapData, ConversionError> {
         // Read the input image
         let img = self.read_image()?;
 
@@ -165,45 +272,47 @@ impl ImageConverter {
     }
 
     /// Read the input image
-    fn read_image(&self) -> Result<image::DynamicImage, Box<dyn std::error::Error>> {
+    fn read_image(&self) -> Result<image::DynamicImage, ConversionError> {
         let img = image::open(&self.config.input_file)?;
 
         // Image must have width and height that are multiples of the tile size
         if img.width() % self.config.tile_width != 0 || img.height() % self.config.tile_height != 0
         {
-            return Err(format!(
-                "Image dimensions must be multiples of tile size ({}x{})",
-                self.config.tile_width, self.config.tile_height
-            )
-            .into());
+            return Err(ConversionError::InvalidDimensions(
+                img.width(),
+                img.height(),
+                self.config.tile_width,
+                self.config.tile_height,
+            ));
         }
 
         // Verify tilemap dimensions match image dimensions
-        let expected_width = self.config.tilemap_width * self.config.tile_width;
-        let expected_height = self.config.tilemap_height * self.config.tile_height;
+        let expected_width = self.config.total_width();
+        let expected_height = self.config.total_height();
 
         if img.width() != expected_width || img.height() != expected_height {
-            return Err(format!(
-                "Image dimensions ({}x{}) don't match expected dimensions ({}x{}) based on tilemap size",
-                img.width(), img.height(), expected_width, expected_height
-            ).into());
+            return Err(ConversionError::DimensionMismatch(
+                img.width(),
+                img.height(),
+                expected_width,
+                expected_height,
+            ));
         }
 
         Ok(img)
     }
 
     /// Extract tiles from the image
-    fn extract_tiles(
-        &self,
-        img: &image::DynamicImage,
-    ) -> Result<Vec<Vec<Oklab>>, Box<dyn std::error::Error>> {
-        let tile_size = (self.config.tile_width * self.config.tile_height) as usize;
-        let mut tiles =
-            Vec::with_capacity((self.config.tilemap_width * self.config.tilemap_height) as usize);
+    fn extract_tiles(&self, img: &image::DynamicImage) -> Result<Vec<Vec<Oklab>>, ConversionError> {
+        let tile_size = self.config.tile_size();
+        let total_tiles = self.config.total_tiles();
+        let mut tiles = Vec::with_capacity(total_tiles);
 
         // Initialize tiles with empty vectors
-        for _ in 0..(self.config.tilemap_width * self.config.tilemap_height) {
-            tiles.push(Vec::with_capacity(tile_size));
+        for _ in 0..total_tiles {
+            let mut tile = Vec::with_capacity(tile_size);
+            tile.resize(tile_size, Oklab::new(0.0, 0.0, 0.0));
+            tiles.push(tile);
         }
 
         // Loop through the pixels in the image, split into tiles and convert to oklab
@@ -215,22 +324,11 @@ impl ImageConverter {
 
             // Convert the pixel to oklab
             let channels = pixel.channels();
-            let oklab: Oklab = srgb_to_oklab(Rgb {
-                r: channels[0],
-                g: channels[1],
-                b: channels[2],
-            })
-            .into();
+            let oklab = Oklab::from_rgb(channels[0], channels[1], channels[2]);
 
             // Store the oklab value in the tile
             let tile_index = (tile_map_y * self.config.tilemap_width + tile_map_x) as usize;
             let pixel_index = (tile_y * self.config.tile_width + tile_x) as usize;
-
-            // Ensure the tile vector is initialized to the right size
-            if tiles[tile_index].len() <= pixel_index {
-                tiles[tile_index].resize(tile_size, Oklab::new(0.0, 0.0, 0.0));
-            }
-
             tiles[tile_index][pixel_index] = oklab;
         }
 
@@ -238,21 +336,54 @@ impl ImageConverter {
     }
 
     /// Generate palettes from the tiles
-    fn generate_palettes(
-        &self,
-        tiles: &[Vec<Oklab>],
-    ) -> Result<Vec<Palette>, Box<dyn std::error::Error>> {
-        let tile_size = (self.config.tile_width * self.config.tile_height) as usize;
+    fn generate_palettes(&self, tiles: &[Vec<Oklab>]) -> Result<Vec<Palette>, ConversionError> {
+        let tile_size = self.config.tile_size();
         let mut cluster_data = Vec::new();
 
         // Prepare data for clustering
+        self.prepare_clustering_data(tiles, tile_size, &mut cluster_data);
+
+        // Perform k-means clustering to group tiles by color similarity
+        let kmean: KMeans<_, 8, _> = KMeans::new(
+            cluster_data,
+            tiles.len(),
+            tile_size * tile_size * 3,
+            OklabDistance,
+        );
+
+        let result = kmean.kmeans_lloyd(
+            self.config.num_palettes,
+            KMEANS_MAX_ITERATIONS,
+            KMeans::init_kmeanplusplus,
+            &KMeansConfig::default(),
+        );
+
+        // Extract colors from each cluster to create palettes
+        let colors = self.extract_palette_colors(tiles, &result)?;
+
+        // Process each palette to ensure it has the right number of colors
+        let mut palettes = self.process_palettes(colors)?;
+
+        // Sort palettes by average luminance for better visual organization
+        palettes.sort_by(|a, b| {
+            a.average_luminance()
+                .partial_cmp(&b.average_luminance())
+                .unwrap()
+        });
+
+        Ok(palettes)
+    }
+
+    /// Prepare data for k-means clustering
+    fn prepare_clustering_data(
+        &self,
+        tiles: &[Vec<Oklab>],
+        tile_size: usize,
+        cluster_data: &mut Vec<f32>,
+    ) {
         for tile in tiles.iter() {
             let mut hue_sorted = tile.clone();
-            hue_sorted.sort_by(|a, b| {
-                let a_hue = a.b.atan2(a.a);
-                let b_hue = b.b.atan2(b.a);
-                a_hue.partial_cmp(&b_hue).unwrap()
-            });
+            hue_sorted.sort_by(|a, b| a.hue().partial_cmp(&b.hue()).unwrap());
 
             // Store every permutation of the tile in the cluster data
             for offset in 0..tile_size {
@@ -271,32 +402,34 @@ impl ImageConverter {
                 }
             }
         }
+    }
 
-        // Perform k-means clustering to group tiles by color similarity
-        let kmean: KMeans<_, 8, _> = KMeans::new(
-            cluster_data,
-            tiles.len(),
-            tile_size * tile_size * 3,
-            OklabDistance,
-        );
-
-        let result = kmean.kmeans_lloyd(
-            self.config.num_palettes,
-            10000,
-            KMeans::init_kmeanplusplus,
-            &KMeansConfig::default(),
-        );
-
-        // Extract colors from each cluster to create palettes
-        let mut colors = Vec::new();
-        for _ in 0..self.config.num_palettes {
-            colors.push(Vec::new());
-        }
+    /// Extract colors for each palette from the clustered tiles
+    fn extract_palette_colors(
+        &self,
+        tiles: &[Vec<Oklab>],
+        clustering_result: &kmeans::KMeansState<f32>,
+    ) -> Result<Vec<Vec<ColorFrequency>>, ConversionError> {
+        let mut colors = vec![Vec::new(); self.config.num_palettes];
 
         for y in 0..self.config.tilemap_height {
             for x in 0..self.config.tilemap_width {
                 let tile_index = (y * self.config.tilemap_width + x) as usize;
-                let assignment = result.assignments[tile_index];
+                if tile_index >= clustering_result.assignments.len() {
+                    return Err(ConversionError::PaletteGeneration(format!(
+                        "Tile index {} out of bounds for assignments",
+                        tile_index
+                    )));
+                }
+
+                let assignment = clustering_result.assignments[tile_index];
+                if assignment >= self.config.num_palettes {
+                    return Err(ConversionError::PaletteGeneration(format!(
+                        "Palette assignment {} exceeds num_palettes {}",
+                        assignment, self.config.num_palettes
+                    )));
+                }
+
                 extract_colors(
                     &tiles[tile_index],
                     self.config.color_similarity_threshold,
@@ -305,7 +438,14 @@ impl ImageConverter {
             }
         }
 
-        // Process each palette to ensure it has the right number of colors
+        Ok(colors)
+    }
+
+    /// Process palette color sets into final palettes
+    fn process_palettes(
+        &self,
+        colors: Vec<Vec<ColorFrequency>>,
+    ) -> Result<Vec<Palette>, ConversionError> {
         let mut palettes = Vec::with_capacity(self.config.num_palettes);
         let mut min_colors = usize::MAX;
         let mut max_colors = 0;
@@ -315,33 +455,25 @@ impl ImageConverter {
             min_colors = min_colors.min(num_colors);
             max_colors = max_colors.max(num_colors);
 
+            // Sort by frequency (most frequent first)
             color_frequencies.sort_by(|a, b| b.frequency.cmp(&a.frequency));
-            color_frequencies.reverse();
 
             // If there are more colors than allowed, reduce using k-means
-            if color_frequencies.len() > self.config.colors_per_palette {
-                color_frequencies = self.reduce_colors(color_frequencies)?;
-            }
+            let processed_colors = if color_frequencies.len() > self.config.colors_per_palette {
+                self.reduce_colors(color_frequencies)?
+            } else {
+                color_frequencies
+            };
 
-            // Sort colors by luminance
-            color_frequencies.sort_by(|a, b| a.color.l.partial_cmp(&b.color.l).unwrap());
-
-            palettes.push(Palette {
-                colors: color_frequencies,
-            });
+            // Create a new palette with the processed colors
+            let mut palette = Palette {
+                colors: processed_colors,
+            };
+            palette.sort_by_luminance();
+            palettes.push(palette);
         }
 
         println!("min_colors: {}, max_colors: {}", min_colors, max_colors);
-
-        // Sort palettes by average luminance
-        palettes.sort_by(|a, b| {
-            let a_avg_l =
-                a.colors.iter().map(|color| color.color.l).sum::<f32>() / a.colors.len() as f32;
-            let b_avg_l =
-                b.colors.iter().map(|color| color.color.l).sum::<f32>() / b.colors.len() as f32;
-            a_avg_l.partial_cmp(&b_avg_l).unwrap()
-        });
-
         Ok(palettes)
     }
 
@@ -349,7 +481,7 @@ impl ImageConverter {
     fn reduce_colors(
         &self,
         color_frequencies: Vec<ColorFrequency>,
-    ) -> Result<Vec<ColorFrequency>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<ColorFrequency>, ConversionError> {
         // Prepare data for k-means
         let mut cluster_data = Vec::new();
         for color_frequency in color_frequencies.iter() {
@@ -364,45 +496,32 @@ impl ImageConverter {
 
         let result = kmean.kmeans_lloyd(
             self.config.colors_per_palette,
-            100000,
+            COLOR_REDUCTION_MAX_ITERATIONS,
             KMeans::init_kmeanplusplus,
             &KMeansConfig::default(),
         );
 
-        // Calculate new representative colors
+        // Calculate new representative colors by weighted averaging
         let mut new_colors = vec![ColorFrequency::default(); self.config.colors_per_palette];
+
         for (i, color) in color_frequencies.iter().enumerate() {
             let assignment = result.assignments[i];
+            // Accumulate weighted components
             new_colors[assignment].color.l += color.color.l * color.frequency as f32;
             new_colors[assignment].color.a += color.color.a * color.frequency as f32;
             new_colors[assignment].color.b += color.color.b * color.frequency as f32;
             new_colors[assignment].frequency += color.frequency;
         }
 
-        // Normalize colors
-        for color in new_colors.iter_mut() {
-            if color.frequency > 0 {
-                color.color.l /= color.frequency as f32;
-                color.color.a /= color.frequency as f32;
-                color.color.b /= color.frequency as f32;
-
-                assert!(!color.color.l.is_nan());
-                assert!(!color.color.a.is_nan());
-                assert!(!color.color.b.is_nan());
-            }
+        // Normalize colors by dividing by total frequency
+        for color in new_colors.iter_mut().filter(|c| c.frequency > 0) {
+            color.color.l /= color.frequency as f32;
+            color.color.a /= color.frequency as f32;
+            color.color.b /= color.frequency as f32;
         }
 
-        // Calculate error metrics
-        let mut total_error = 0.0;
-        for (i, color) in color_frequencies.iter().enumerate() {
-            let assignment = result.assignments[i];
-            let error =
-                oklab_delta_e(color.color, new_colors[assignment].color) * color.frequency as f32;
-            assert!(!error.is_nan());
-            total_error += error;
-        }
-
-        println!("Color reduction error: {} {}", result.distsum, total_error);
+        // Log error metrics for debugging
+        calculate_color_reduction_error(&color_frequencies, &new_colors, &result);
 
         Ok(new_colors)
     }
@@ -412,52 +531,59 @@ impl ImageConverter {
         &self,
         tiles: &[Vec<Oklab>],
         palettes: &[Palette],
-    ) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
-        let mut tile_palette =
-            Vec::with_capacity((self.config.tilemap_width * self.config.tilemap_height) as usize);
-        let mut max_tile_error = 0.0;
+    ) -> Result<Vec<usize>, ConversionError> {
+        let total_tiles = self.config.total_tiles();
+        let mut tile_palette = Vec::with_capacity(total_tiles);
+        let mut max_tile_error: f32 = 0.0;
 
         // Find the best palette for each tile
         for y in 0..self.config.tilemap_height {
             for x in 0..self.config.tilemap_width {
                 let tile_index = (y * self.config.tilemap_width + x) as usize;
+                let (palette_index, error) =
+                    self.find_best_palette_for_tile(tiles, palettes, tile_index);
 
-                // Find which palette has the least error
-                let mut min_error = f32::MAX;
-                let mut min_palette = 0;
-
-                for (i, palette) in palettes.iter().enumerate() {
-                    let mut error = 0.0;
-                    for color in tiles[tile_index].iter() {
-                        let mut min_delta_e = f32::MAX;
-                        for palette_color in palette.colors.iter() {
-                            let delta_e = oklab_delta_e(*color, palette_color.color);
-                            if delta_e < min_delta_e {
-                                min_delta_e = delta_e;
-                            }
-                        }
-                        error += min_delta_e;
-                    }
-
-                    if error < min_error {
-                        min_error = error;
-                        min_palette = i;
-                    }
-                }
-
-                tile_palette.push(min_palette);
-                if min_error > max_tile_error {
-                    max_tile_error = min_error;
-                }
+                tile_palette.push(palette_index);
+                max_tile_error = max_tile_error.max(error);
             }
         }
 
         println!(
             "max_tile_error: {}",
-            max_tile_error / self.config.tilemap_width as f32 / self.config.tilemap_height as f32
+            max_tile_error / self.config.tile_width as f32 / self.config.tile_height as f32
         );
 
         Ok(tile_palette)
+    }
+
+    /// Find the best palette for a specific tile
+    fn find_best_palette_for_tile(
+        &self,
+        tiles: &[Vec<Oklab>],
+        palettes: &[Palette],
+        tile_index: usize,
+    ) -> (usize, f32) {
+        let mut min_error = f32::MAX;
+        let mut min_palette = 0;
+
+        for (i, palette) in palettes.iter().enumerate() {
+            let mut error = 0.0;
+            for color in tiles[tile_index].iter() {
+                let mut min_delta_e = f32::MAX;
+                for palette_color in palette.colors.iter() {
+                    let delta_e = oklab_delta_e(*color, palette_color.color);
+                    min_delta_e = min_delta_e.min(delta_e);
+                }
+                error += min_delta_e;
+            }
+
+            if error < min_error {
+                min_error = error;
+                min_palette = i;
+            }
+        }
+
+        (min_palette, min_error)
     }
 
     /// Quantize tiles based on assigned palettes
@@ -466,30 +592,45 @@ impl ImageConverter {
         tiles: &[Vec<Oklab>],
         palettes: &[Palette],
         tile_palette_assignments: &[usize],
-    ) -> Result<Vec<Vec<u16>>, Box<dyn std::error::Error>> {
-        let tile_size = (self.config.tile_width * self.config.tile_height) as usize;
-        let pixels_per_chunk = 4; // 4 pixels per u16 (4 bits per pixel)
-        let chunks_per_tile = tile_size.div_ceil(pixels_per_chunk);
-
+    ) -> Result<Vec<Vec<u16>>, ConversionError> {
+        let chunks_per_tile = self.config.chunks_per_tile();
         let mut quantized_tiles = Vec::with_capacity(tiles.len());
         let mut dither_error = Vec::new();
 
         // Initialize error buffer if dithering is enabled
         if self.config.dithering {
-            let img_width = self.config.tilemap_width * self.config.tile_width;
-            let img_height = self.config.tilemap_height * self.config.tile_height;
-            let total_pixels = (img_width * img_height) as usize;
-
-            for _ in 0..total_pixels {
-                dither_error.push(Oklab::new(0.0, 0.0, 0.0));
-            }
+            let total_pixels = (self.config.total_width() * self.config.total_height()) as usize;
+            dither_error = vec![Oklab::new(0.0, 0.0, 0.0); total_pixels];
         }
+
         // Initialize quantized tiles
         for _ in 0..tiles.len() {
             quantized_tiles.push(vec![0u16; chunks_per_tile]);
         }
 
-        // Quantize each tile
+        // Process each pixel row by row for better cache locality
+        self.quantize_pixels(
+            tiles,
+            palettes,
+            tile_palette_assignments,
+            &mut quantized_tiles,
+            &mut dither_error,
+        )?;
+
+        Ok(quantized_tiles)
+    }
+
+    /// Quantize all pixels and apply dithering if enabled
+    fn quantize_pixels(
+        &self,
+        tiles: &[Vec<Oklab>],
+        palettes: &[Palette],
+        tile_palette_assignments: &[usize],
+        quantized_tiles: &mut [Vec<u16>],
+        dither_error: &mut [Oklab],
+    ) -> Result<(), ConversionError> {
+        let img_width = self.config.total_width() as usize;
+
         for y in 0..self.config.tilemap_height {
             for ty in 0..self.config.tile_height {
                 for x in 0..self.config.tilemap_width {
@@ -502,39 +643,26 @@ impl ImageConverter {
                         let i = (ty * self.config.tile_width + tx) as usize;
                         let gy = (y * self.config.tile_height + ty) as usize;
                         let gx = (x * self.config.tile_width + tx) as usize;
-                        let img_width =
-                            (self.config.tilemap_width * self.config.tile_width) as usize;
 
                         // Get original color, add dithering error if enabled
-                        let mut color = tiles[tile_index][i];
-                        if self.config.dithering {
-                            color = Oklab::new(
-                                color.l + dither_error[gy * img_width + gx].l,
-                                color.a + dither_error[gy * img_width + gx].a,
-                                color.b + dither_error[gy * img_width + gx].b,
-                            );
-                        }
+                        let color = if self.config.dithering {
+                            tiles[tile_index][i].add_error(&dither_error[gy * img_width + gx])
+                        } else {
+                            tiles[tile_index][i]
+                        };
 
                         // Find closest color in palette
-                        let mut min_delta_e = f32::MAX;
-                        let mut min_index = 0;
-                        for (j, palette_color) in palette.colors.iter().enumerate() {
-                            let delta_e = oklab_delta_e(color, palette_color.color);
-                            if delta_e < min_delta_e {
-                                min_delta_e = delta_e;
-                                min_index = j;
-                            }
-                        }
+                        let min_index = palette.find_best_color(color);
 
                         // Set color index in output tile
-                        let chunk_idx = i / pixels_per_chunk;
-                        let pixel_pos = i % pixels_per_chunk;
-                        out_tile[chunk_idx] |= (min_index as u16) << (pixel_pos * 4);
+                        let chunk_idx = i / PIXELS_PER_CHUNK;
+                        let pixel_pos = i % PIXELS_PER_CHUNK;
+                        out_tile[chunk_idx] |= (min_index as u16) << (pixel_pos * BITS_PER_COLOR);
 
                         // Apply dithering if enabled
                         if self.config.dithering {
                             self.apply_sierra_dithering(
-                                &mut dither_error,
+                                dither_error,
                                 color,
                                 palette.colors[min_index].color,
                                 gx,
@@ -547,7 +675,7 @@ impl ImageConverter {
             }
         }
 
-        Ok(quantized_tiles)
+        Ok(())
     }
 
     /// Apply Sierra dithering algorithm to distribute quantization error
@@ -560,62 +688,45 @@ impl ImageConverter {
         y: usize,
         width: usize,
     ) {
-        let img_height = (self.config.tilemap_height * self.config.tile_height) as usize;
-        let diff = Oklab::new(
-            ((original.l - quantized.l) / 32.0) * self.config.dither_factor,
-            ((original.a - quantized.a) / 32.0) * self.config.dither_factor,
-            ((original.b - quantized.b) / 32.0) * self.config.dither_factor,
-        );
+        let img_height = self.config.total_height() as usize;
+        let diff = original.error_term(&quantized, self.config.dither_factor, DITHER_ERROR_DIVISOR);
 
-        // Sierra dithering pattern
+        // Sierra dithering pattern - Apply error diffusion to neighboring pixels
+        // This is the classic Sierra filter pattern with 16 coefficients
+
+        // Current row
         if x < width - 1 {
-            error[y * width + x + 1].l += diff.l * 5.0;
-            error[y * width + x + 1].a += diff.a * 5.0;
-            error[y * width + x + 1].b += diff.b * 5.0;
+            apply_error(&mut error[y * width + x + 1], &diff, 5.0);
         }
         if x < width - 2 {
-            error[y * width + x + 2].l += diff.l * 3.0;
-            error[y * width + x + 2].a += diff.a * 3.0;
-            error[y * width + x + 2].b += diff.b * 3.0;
+            apply_error(&mut error[y * width + x + 2], &diff, 3.0);
         }
+
+        // Next row
         if y < img_height - 1 {
             if x > 1 {
-                error[(y + 1) * width + x - 2].l += diff.l * 2.0;
-                error[(y + 1) * width + x - 2].a += diff.a * 2.0;
-                error[(y + 1) * width + x - 2].b += diff.b * 2.0;
+                apply_error(&mut error[(y + 1) * width + x - 2], &diff, 2.0);
             }
             if x > 0 {
-                error[(y + 1) * width + x - 1].l += diff.l * 4.0;
-                error[(y + 1) * width + x - 1].a += diff.a * 4.0;
-                error[(y + 1) * width + x - 1].b += diff.b * 4.0;
+                apply_error(&mut error[(y + 1) * width + x - 1], &diff, 4.0);
             }
-            error[(y + 1) * width + x].l += diff.l * 5.0;
-            error[(y + 1) * width + x].a += diff.a * 5.0;
-            error[(y + 1) * width + x].b += diff.b * 5.0;
+            apply_error(&mut error[(y + 1) * width + x], &diff, 5.0);
             if x < width - 1 {
-                error[(y + 1) * width + x + 1].l += diff.l * 4.0;
-                error[(y + 1) * width + x + 1].a += diff.a * 4.0;
-                error[(y + 1) * width + x + 1].b += diff.b * 4.0;
+                apply_error(&mut error[(y + 1) * width + x + 1], &diff, 4.0);
             }
             if x < width - 2 {
-                error[(y + 1) * width + x + 2].l += diff.l * 2.0;
-                error[(y + 1) * width + x + 2].a += diff.a * 2.0;
-                error[(y + 1) * width + x + 2].b += diff.b * 2.0;
+                apply_error(&mut error[(y + 1) * width + x + 2], &diff, 2.0);
             }
         }
+
+        // Two rows below
         if y < img_height - 2 {
             if x > 0 {
-                error[(y + 2) * width + x - 1].l += diff.l * 2.0;
-                error[(y + 2) * width + x - 1].a += diff.a * 2.0;
-                error[(y + 2) * width + x - 1].b += diff.b * 2.0;
+                apply_error(&mut error[(y + 2) * width + x - 1], &diff, 2.0);
             }
-            error[(y + 2) * width + x].l += diff.l * 3.0;
-            error[(y + 2) * width + x].a += diff.a * 3.0;
-            error[(y + 2) * width + x].b += diff.b * 3.0;
+            apply_error(&mut error[(y + 2) * width + x], &diff, 3.0);
             if x < width - 1 {
-                error[(y + 2) * width + x + 1].l += diff.l * 2.0;
-                error[(y + 2) * width + x + 1].a += diff.a * 2.0;
-                error[(y + 2) * width + x + 1].b += diff.b * 2.0;
+                apply_error(&mut error[(y + 2) * width + x + 1], &diff, 2.0);
             }
         }
     }
@@ -624,7 +735,7 @@ impl ImageConverter {
     fn generate_tilemap(
         &self,
         tile_palette_assignments: &[usize],
-    ) -> Result<Vec<u16>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<u16>, ConversionError> {
         let mut tilemap = Vec::with_capacity(tile_palette_assignments.len());
 
         for y in 0..self.config.tilemap_height {
@@ -633,7 +744,8 @@ impl ImageConverter {
                 let palette_idx = tile_palette_assignments[tile_index];
 
                 // Create tilemap entry with palette index in high bits
-                tilemap.push((palette_idx << 10) as u16);
+                let entry = TilemapEntry::new(palette_idx, tile_index);
+                tilemap.push(entry.raw_value);
             }
         }
 
@@ -641,17 +753,13 @@ impl ImageConverter {
     }
 
     /// Write palette data to hex file
-    fn write_palette_file(&self, palettes: &[Palette]) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_palette_file(&self, palettes: &[Palette]) -> Result<(), ConversionError> {
         let mut palette_file = File::create(&self.config.output_palette_hex)?;
 
         for palette in palettes.iter() {
             for color in palette.colors.iter() {
-                let rgb = oklab_to_srgb(*color.color);
-                write!(
-                    &mut palette_file,
-                    "{:02x}{:02x}{:02x} ",
-                    rgb.r, rgb.g, rgb.b
-                )?;
+                let (r, g, b) = color.color.to_rgb();
+                write!(&mut palette_file, "{:02x}{:02x}{:02x} ", r, g, b)?;
             }
 
             // Pad with zeros for missing colors
@@ -665,7 +773,7 @@ impl ImageConverter {
     }
 
     /// Write tilemap data to hex file
-    fn write_tilemap_file(&self, tilemap: &[u16]) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_tilemap_file(&self, tilemap: &[u16]) -> Result<(), ConversionError> {
         let mut tile_map_file = File::create(&self.config.output_tilemap_hex)?;
 
         for (i, item) in tilemap.iter().enumerate() {
@@ -679,12 +787,8 @@ impl ImageConverter {
     }
 
     /// Write tile data to hex file
-    fn write_tiles_file(
-        &self,
-        quantized_tiles: &[Vec<u16>],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_tiles_file(&self, quantized_tiles: &[Vec<u16>]) -> Result<(), ConversionError> {
         let mut tile_data_file = File::create(&self.config.output_tiles_hex)?;
-        let chunks_per_row = 2; // Number of u16 chunks per row in the output file
 
         for y in 0..self.config.tilemap_height {
             for ty in 0..self.config.tile_height {
@@ -693,8 +797,8 @@ impl ImageConverter {
                     let tile = &quantized_tiles[tile_index];
 
                     // Calculate which chunks to write for this row
-                    let row_start = ty as usize * chunks_per_row;
-                    let row_end = row_start + chunks_per_row;
+                    let row_start = ty as usize * CHUNKS_PER_ROW;
+                    let row_end = row_start + CHUNKS_PER_ROW;
 
                     // Write the chunks for this row
                     for tx in row_start..row_end {
@@ -718,49 +822,61 @@ impl ImageConverter {
         quantized_tiles: &[Vec<u16>],
         palettes: &[Palette],
         tilemap: &[u16],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let img_width = self.config.tilemap_width * self.config.tile_width;
-        let img_height = self.config.tilemap_height * self.config.tile_height;
+    ) -> Result<(), ConversionError> {
+        let img_width = self.config.total_width();
+        let img_height = self.config.total_height();
         let mut out_img = image::ImageBuffer::new(img_width, img_height);
-        let pixels_per_chunk = 4;
 
         for y in 0..self.config.tilemap_height {
             for x in 0..self.config.tilemap_width {
-                let tile_index = (y * self.config.tilemap_width + x) as usize;
-                let map_entry = tilemap[tile_index];
-                let palette_index = ((map_entry >> 10) as usize) & (self.config.num_palettes - 1);
-                let palette = &palettes[palette_index];
-
-                for (chunk_idx, color) in quantized_tiles[tile_index].iter().enumerate() {
-                    let base_i = chunk_idx * pixels_per_chunk;
-
-                    for pixel_offset in 0..pixels_per_chunk {
-                        if base_i + pixel_offset
-                            >= (self.config.tile_width * self.config.tile_height) as usize
-                        {
-                            break;
-                        }
-
-                        let color_index = ((*color >> (pixel_offset * 4)) & 15) as usize;
-                        if color_index < palette.colors.len() {
-                            let palette_color = palette.colors[color_index].color;
-                            let rgb = oklab_to_srgb(*palette_color);
-
-                            let pixel_y = (base_i + pixel_offset) / self.config.tile_width as usize;
-                            let pixel_x = (base_i + pixel_offset) % self.config.tile_width as usize;
-
-                            out_img.put_pixel(
-                                x * self.config.tile_width + pixel_x as u32,
-                                y * self.config.tile_height + pixel_y as u32,
-                                image::Rgb([rgb.r, rgb.g, rgb.b]),
-                            );
-                        }
-                    }
-                }
+                self.render_tile(&mut out_img, quantized_tiles, palettes, tilemap, x, y)?;
             }
         }
 
         out_img.save(&self.config.output_png)?;
+        Ok(())
+    }
+
+    /// Render a single tile to the output image
+    fn render_tile(
+        &self,
+        out_img: &mut image::ImageBuffer<image::Rgb<u8>, Vec<u8>>,
+        quantized_tiles: &[Vec<u16>],
+        palettes: &[Palette],
+        tilemap: &[u16],
+        tile_x: u32,
+        tile_y: u32,
+    ) -> Result<(), ConversionError> {
+        let tile_index = (tile_y * self.config.tilemap_width + tile_x) as usize;
+        let map_entry = tilemap[tile_index];
+        let palette_index =
+            ((map_entry >> PALETTE_INDEX_SHIFT) as usize) & (self.config.num_palettes - 1);
+        let palette = &palettes[palette_index];
+
+        for (chunk_idx, color) in quantized_tiles[tile_index].iter().enumerate() {
+            let base_i = chunk_idx * PIXELS_PER_CHUNK;
+
+            for pixel_offset in 0..PIXELS_PER_CHUNK {
+                if base_i + pixel_offset >= self.config.tile_size() {
+                    break;
+                }
+
+                let color_index = ((*color >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
+                if color_index < palette.colors.len() {
+                    let (r, g, b) = palette.colors[color_index].color.to_rgb();
+
+                    let pixel_y = (base_i + pixel_offset) / self.config.tile_width as usize;
+                    let pixel_x = (base_i + pixel_offset) % self.config.tile_width as usize;
+
+                    out_img.put_pixel(
+                        tile_x * self.config.tile_width + pixel_x as u32,
+                        tile_y * self.config.tile_height + pixel_y as u32,
+                        image::Rgb([r, g, b]),
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -784,7 +900,8 @@ impl ImageConverter {
             .into_iter()
             .enumerate()
             .map(|(i, raw_value)| TilemapEntry {
-                palette_index: ((raw_value >> 10) as usize) & (self.config.num_palettes - 1),
+                palette_index: ((raw_value >> PALETTE_INDEX_SHIFT) as usize)
+                    & (self.config.num_palettes - 1),
                 tile_index: i,
                 raw_value,
             })
@@ -799,13 +916,36 @@ impl ImageConverter {
     }
 
     /// Write JSON output file
-    fn write_json_file(
-        &self,
-        path: &str,
-        data: &TilemapData,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_json_file(&self, path: &str, data: &TilemapData) -> Result<(), ConversionError> {
         let file = File::create(path)?;
         serde_json::to_writer_pretty(file, data)?;
         Ok(())
     }
+}
+
+/// Apply error to a pixel in the error diffusion buffer
+#[inline]
+fn apply_error(error_pixel: &mut Oklab, diff: &Oklab, weight: f32) {
+    error_pixel.l += diff.l * weight;
+    error_pixel.a += diff.a * weight;
+    error_pixel.b += diff.b * weight;
+}
+
+/// Calculate and log error metrics for color reduction process
+fn calculate_color_reduction_error(
+    original_colors: &[ColorFrequency],
+    new_colors: &[ColorFrequency],
+    result: &kmeans::KMeansState<f32>,
+) {
+    // Calculate total weighted error
+    let mut total_error = 0.0;
+    for (i, color) in original_colors.iter().enumerate() {
+        let assignment = result.assignments[i];
+        let error =
+            oklab_delta_e(color.color, new_colors[assignment].color) * color.frequency as f32;
+        assert!(!error.is_nan());
+        total_error += error;
+    }
+
+    println!("Color reduction error: {} {}", result.distsum, total_error);
 }

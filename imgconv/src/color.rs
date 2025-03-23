@@ -1,9 +1,18 @@
+//! Color types and utilities for image processing.
+//!
+//! This module contains color-related functionality including:
+//! - `Oklab` wrapper for the oklab crate's color type
+//! - Color distance calculations
+//! - Color frequency counting
+
 use std::simd::num::SimdFloat;
 use std::simd::{LaneCount, Simd, StdFloat, SupportedLaneCount};
 
 use kmeans::DistanceFunction;
+use oklab::{self, oklab_to_srgb, srgb_to_oklab, Rgb};
 use serde::{Deserialize, Serialize};
 
+/// Wrapper around oklab::Oklab with additional functionality
 #[derive(Copy, Clone, Debug, PartialOrd, PartialEq)]
 #[repr(transparent)]
 pub struct Oklab(oklab::Oklab);
@@ -42,11 +51,48 @@ impl From<oklab::Oklab> for Oklab {
 }
 
 impl Oklab {
+    /// Create a new Oklab color from L, a, b components
     pub fn new(l: f32, a: f32, b: f32) -> Self {
         Oklab(oklab::Oklab { l, a, b })
     }
+
+    /// Convert from RGB to Oklab
+    pub fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        srgb_to_oklab(Rgb { r, g, b }).into()
+    }
+
+    /// Convert Oklab to RGB
+    pub fn to_rgb(self) -> (u8, u8, u8) {
+        let rgb = oklab_to_srgb(self.0);
+        (rgb.r, rgb.g, rgb.b)
+    }
+
+    /// Compute the hue angle in radians
+    pub fn hue(&self) -> f32 {
+        self.b.atan2(self.a)
+    }
+
+    /// Compute the chroma (color intensity)
+    pub fn chroma(&self) -> f32 {
+        (self.a * self.a + self.b * self.b).sqrt()
+    }
+
+    /// Add dithering error to this color
+    pub fn add_error(&self, error: &Self) -> Self {
+        Oklab::new(self.l + error.l, self.a + error.a, self.b + error.b)
+    }
+
+    /// Calculate a scaled error term for dithering
+    pub fn error_term(&self, other: &Self, factor: f32, divisor: f32) -> Self {
+        Oklab::new(
+            ((self.l - other.l) / divisor) * factor,
+            ((self.a - other.a) / divisor) * factor,
+            ((self.b - other.b) / divisor) * factor,
+        )
+    }
 }
 
+/// A color and its frequency in an image
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ColorFrequency {
     pub color: Oklab,
@@ -62,8 +108,16 @@ impl Default for ColorFrequency {
     }
 }
 
+impl ColorFrequency {
+    /// Create a new ColorFrequency with the given color and frequency
+    pub fn new(color: Oklab, frequency: usize) -> Self {
+        Self { color, frequency }
+    }
+}
+
 /// Calculate the perceptual difference between two colors in Oklab space
 pub fn oklab_delta_e(a: Oklab, b: Oklab) -> f32 {
+    // Formula for calculating perceptual difference:
     // ΔL = L1 - L2
     // C1 = √(a1² + b1²)
     // C2 = √(a2² + b2²)
@@ -73,8 +127,8 @@ pub fn oklab_delta_e(a: Oklab, b: Oklab) -> f32 {
     // ΔH = √(|Δa² + Δb² - ΔC²|)
     // ΔEOK = √(ΔL² + ΔC² + ΔH²)
     let delta_l = a.l - b.l;
-    let c1 = (a.a * a.a + a.b * a.b).sqrt();
-    let c2 = (b.a * b.a + b.b * b.b).sqrt();
+    let c1 = a.chroma();
+    let c2 = b.chroma();
     let delta_c = c1 - c2;
     let delta_a = a.a - b.a;
     let delta_b = a.b - b.b;
@@ -84,6 +138,7 @@ pub fn oklab_delta_e(a: Oklab, b: Oklab) -> f32 {
     (delta_l * delta_l + delta_c * delta_c + delta_h * delta_h).sqrt()
 }
 
+/// Distance function for k-means clustering based on Oklab color space
 pub struct OklabDistance;
 
 impl<const LANES: usize> DistanceFunction<f32, LANES> for OklabDistance
@@ -111,15 +166,7 @@ where
             .chunks_exact(LANES)
             .map(|i| Simd::from_slice(i));
 
-        // ΔL = L1 - L2
-        // C1 = √(a1² + b1²)
-        // C2 = √(a2² + b2²)
-        // ΔC = C1 - C2
-        // Δa = a1 - a2
-        // Δb = b1 - b2
-        // ΔH = √(|Δa² + Δb² - ΔC²|)
-        // ΔEOK = √(ΔL² + ΔC² + ΔH²)
-
+        // Calculate delta using SIMD operations
         let delta_l = a_l.zip(b_l).map(|(a_l, b_l)| a_l - b_l);
         let c1 = a_a
             .clone()
@@ -146,4 +193,18 @@ where
             .map(|(sum_delta_l_c, delta_h)| (sum_delta_l_c + delta_h * delta_h).sqrt());
         delta_e.map(|e| e.reduce_sum()).sum()
     }
+}
+
+/// Find similar colors in a palette that are close enough according to threshold
+pub fn find_similar_color(
+    color: Oklab,
+    palette: &[ColorFrequency],
+    threshold: f32,
+) -> Option<usize> {
+    for (i, item) in palette.iter().enumerate() {
+        if oklab_delta_e(color, item.color) < threshold {
+            return Some(i);
+        }
+    }
+    None
 }

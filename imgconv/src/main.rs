@@ -10,7 +10,7 @@ mod imgconv;
 use imgconv::{Config, ImageConverter};
 
 /// Command line interface to make it easier to use different configurations
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), crate::imgconv::ConversionError> {
     let args: Vec<String> = std::env::args().collect();
 
     // If no arguments provided, run with default config
