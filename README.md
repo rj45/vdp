@@ -45,15 +45,17 @@ This utility uses KMeans Clustering to convert the image to a sprite sheet (tile
 
 ## How does it work?
 
-It's a sprite engine where sprites are rectangles of a tile map. There are only sprites because sprites can be the size of a whole tile map, and with transparency masks, a sprite can also be a text buffer.
+It's a sprite engine where sprites are rectangles of a tile map. There are only sprites because sprites can be the size of a whole tile map, and with transparency masks, a sprite can also be a text buffer. Many sprites can be on screen at once (specs TBD, but expecting at least 100).
 
 At a high level, sprites are drawn to a line buffer while at the same time a previous copy of the line buffer is being drawn to the screen. A line buffer is used instead of a frame buffer in order to save on memory, so every frame every sprite is redrawn to the line buffer.
 
-Sprite sheets are simply tile maps. "Tile map" is perhaps a misnomer because it isn't made up of reusable tiles per se. The transparency masks are reusable tiles, but because SDRAM and QSPI devices are large and prefer to stream data rather than do random access, the tile pixels are simply a bitmap that's 8 times larger than the tilemap. The tilemap still has the color palette information for each 8x8 section of the tile data. But the tile data is just a 4bpp bitmap.
+Sprite metadata is stored in BRAM, and each scanline the sprite data is scanned by a simple state machine and any sprites on that scanline are queued in a fifo. This process can happen in parallel to the sprite drawing since it is stored in a separate memory.
 
-Each 8x8 "tile" of the tile data can use one of 16 colors from one of 32 different palettes giving 512 colours total. The palette index is stored in the tilemap.
+Sprite sheets are simply tile maps. "Tile map" is perhaps a misnomer because it isn't made up of reusable tiles per se. The transparency masks are reusable tiles, but because SDRAM and QSPI devices are large and prefer to stream data rather than do random access, the tile pixels are simply a 4bpp bitmap that's 8 times larger than the tilemap in the X and Y directions.
 
-The tile map also references a transparency mask, which is a 8x8 pixel bit mask representing which pixels should be drawn. This is used with a zbuffer to prevent overdraw. Because the cached tile map data, the zbuffer and the transparency mask tiles are all stored in BRAM, this process can be done in parallel to the reading of pixel data.
+Each 8x8 "tile" of the tile data can use one of 16 colors from one of 32 different palettes giving 512 colours total. The palette index for each tile is stored in the tilemap.
+
+The tile map also references a transparency mask, which is a 8x8 pixel bit mask representing which pixels should be drawn. This is used with a zbuffer to prevent overdraw. Because the cached tile map data, zbuffer and the transparency mask tiles are all stored in BRAM, this process can be done in parallel to the reading of pixel data.
 
 Pixels can be drawn to the line buffer at 4 pixels per clock, which is convenient because 4 pixels is 16 bits of tile data, and the SDRAM is 16 bits wide. Because the line buffer is double buffered, and a different buffer is currently being drawn to the screen, then all the cycles of the scan line (including blanking time) can be used to draw into the buffer. This allows many sprites to be drawn per line.
 
