@@ -461,38 +461,30 @@ fn main() {
         }
     }
 
-    let mut out_tiles = Vec::new();
     let mut out_tile_map = Vec::new();
     for y in 0..32 {
         for x in 0..32 {
             let tile_index = y * 32 + x;
-            let out_tile = quantized_tiles[tile_index];
-            let index = out_tiles
-                .iter()
-                .position(|&tile| tile == out_tile)
-                .unwrap_or_else(|| {
-                    out_tiles.push(out_tile);
-                    out_tiles.len() - 1
-                });
-            out_tile_map.push(((tile_palette[tile_index] << 10) | index) as u16);
+            out_tile_map.push((tile_palette[tile_index] << 10) as u16);
         }
     }
-    println!("out_tiles: {}", out_tiles.len());
 
     let mut tile_map_file = File::create("rtl/tile_map.hex").unwrap();
     let mut tile_data_file = File::create("rtl/tiles.hex").unwrap();
-    for tile in out_tiles.iter() {
-        for &item in tile.iter() {
-            write!(&mut tile_data_file, "{:04x} ", item).unwrap();
+
+    for y in 0..32 {
+        for ty in 0..8 {
+            for x in 0..32 {
+                let tile_index = y * 32 + x;
+                let tile = quantized_tiles[tile_index];
+                for tx in 0..2 {
+                    write!(&mut tile_data_file, "{:04x} ", tile[ty * 2 + tx]).unwrap();
+                }
+            }
+            writeln!(&mut tile_data_file).unwrap();
         }
-        writeln!(&mut tile_data_file).unwrap();
     }
-    for _ in out_tiles.len()..1024 {
-        for _ in 0..16 {
-            write!(&mut tile_data_file, "0000 ").unwrap();
-        }
-        writeln!(&mut tile_data_file).unwrap();
-    }
+
     for (i, item) in out_tile_map.iter().enumerate() {
         write!(&mut tile_map_file, "{:04x} ", item).unwrap();
         if i % 32 == 31 {
@@ -503,11 +495,11 @@ fn main() {
     let mut out_img = image::ImageBuffer::new(256, 256);
     for y in 0..32 {
         for x in 0..32 {
-            let map_entry = out_tile_map[y * 32 + x];
-            let tile_index = (map_entry & 1023) as usize;
+            let tile_index = y * 32 + x;
+            let map_entry = out_tile_map[tile_index];
             let tile_pal = ((map_entry >> 10) as usize) & 31;
             let palette = &palettes[tile_pal];
-            for (i, color) in out_tiles[tile_index].iter().enumerate() {
+            for (i, color) in quantized_tiles[tile_index].iter().enumerate() {
                 for si in 0..4 {
                     let min_index = ((*color >> (si * 4)) & 15) as usize;
                     let palette_color = palette[min_index].color;

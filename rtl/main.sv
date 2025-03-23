@@ -141,6 +141,8 @@ module main #(parameter CORDW=11) ( // coordinate width
 
     logic [11:0]  d2_lb_x;
     logic [15:0]  d2_tile_map_data;
+    logic [4:0]   d2_tile_map_x;
+    logic [4:0]   d2_tile_map_y;
     logic [2:0]   d2_tile_row;
     logic         d2_tile_col;
     logic         d2_line;
@@ -160,6 +162,8 @@ module main #(parameter CORDW=11) ( // coordinate width
         d2_bufsel <= d1_bufsel;
         d2_tile_row <= d1_tile_row;
         d2_tile_col <= d1_tile_col;
+        d2_tile_map_x <= d1_tile_map_x;
+        d2_tile_map_y <= d1_tile_map_y;
     end
 
     //////////////////////////////////////////////////////////////////////
@@ -176,9 +180,8 @@ module main #(parameter CORDW=11) ( // coordinate width
 
     tile_bram #("tiles.hex") tile_inst (
         .clk_draw(clk_draw),
-        // .tile_y(d2_tile_map_data[9:5]),
-        // .tile_x(d2_tile_map_data[4:0]),
-        .tile_index(d2_tile_map_data[9:0]),
+        .tile_y(d2_tile_map_y),
+        .tile_x(d2_tile_map_x),
         .tile_row(d2_tile_row),
         .tile_col(d2_tile_col),
 
