@@ -29,6 +29,8 @@ const COLOR_REDUCTION_MAX_ITERATIONS: usize = 100000;
 const CHUNKS_PER_ROW: usize = 2;
 /// Bit position for palette index in tilemap entry
 const PALETTE_INDEX_SHIFT: usize = 10;
+/// Delta E multiplier for error metrics display
+const DELTA_E_DISPLAY_FACTOR: f32 = 100.0;
 
 /// Errors that can occur during image conversion
 #[derive(Error, Debug)]
@@ -259,7 +261,7 @@ impl ImageConverter {
         self.write_tiles_file(&quantized_tiles)?;
 
         // Generate output image
-        self.generate_output_image(&quantized_tiles, &palettes, &tilemap)?;
+        let output_img = self.generate_output_image(&quantized_tiles, &palettes, &tilemap)?;
 
         // Create data for JSON output
         let tilemap_data = self.create_tilemap_data(raw_tiles, palettes, quantized_tiles, tilemap);
@@ -268,6 +270,9 @@ impl ImageConverter {
         if let Some(json_path) = &self.config.output_json {
             self.write_json_file(json_path, &tilemap_data)?;
         }
+
+        // Generate error metrics for the output image
+        self.generate_error_metrics(&output_img, &img)?;
 
         Ok(tilemap_data)
     }
@@ -813,7 +818,7 @@ impl ImageConverter {
         quantized_tiles: &[Vec<u16>],
         palettes: &[Palette],
         tilemap: &[u16],
-    ) -> Result<(), ConversionError> {
+    ) -> Result<RgbImage, ConversionError> {
         let img_width = self.config.total_width();
         let img_height = self.config.total_height();
         let mut out_img = image::ImageBuffer::new(img_width, img_height);
@@ -825,6 +830,73 @@ impl ImageConverter {
         }
 
         out_img.save(&self.config.output_png)?;
+        Ok(out_img)
+    }
+
+    /// Compare the output image with the original to calculate quality metrics
+    fn generate_error_metrics(
+        &self,
+        output_img: &RgbImage,
+        original_img: &image::DynamicImage,
+    ) -> Result<(), ConversionError> {
+        let mut delta_e_values =
+            Vec::with_capacity((self.config.total_width() * self.config.total_height()) as usize);
+
+        // Calculate delta_e for each pixel
+        for (x, y, original_pixel) in original_img.pixels() {
+            if x >= output_img.width() || y >= output_img.height() {
+                continue;
+            }
+
+            let original_rgb = original_pixel.to_rgb();
+            let output_pixel = output_img.get_pixel(x, y);
+
+            let original_oklab = Oklab::from_rgb(original_rgb[0], original_rgb[1], original_rgb[2]);
+            let output_oklab = Oklab::from_rgb(output_pixel[0], output_pixel[1], output_pixel[2]);
+
+            let delta_e = oklab_delta_e(original_oklab, output_oklab) * DELTA_E_DISPLAY_FACTOR;
+            delta_e_values.push(delta_e);
+        }
+
+        // Sort the values to calculate percentiles
+        delta_e_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Calculate statistics
+        let min_delta_e = delta_e_values.first().copied().unwrap_or(0.0);
+        let max_delta_e = delta_e_values.last().copied().unwrap_or(0.0);
+
+        let sum_delta_e: f32 = delta_e_values.iter().sum();
+        let mean_delta_e = sum_delta_e / delta_e_values.len() as f32;
+
+        let median_index = delta_e_values.len() / 2;
+        let median_delta_e = delta_e_values.get(median_index).copied().unwrap_or(0.0);
+
+        let p75_index = (delta_e_values.len() as f32 * 0.75) as usize;
+        let p75_delta_e = delta_e_values.get(p75_index).copied().unwrap_or(0.0);
+
+        let p90_index = (delta_e_values.len() as f32 * 0.90) as usize;
+        let p90_delta_e = delta_e_values.get(p90_index).copied().unwrap_or(0.0);
+
+        let p95_index = (delta_e_values.len() as f32 * 0.95) as usize;
+        let p95_delta_e = delta_e_values.get(p95_index).copied().unwrap_or(0.0);
+
+        let p99_index = (delta_e_values.len() as f32 * 0.99) as usize;
+        let p99_delta_e = delta_e_values.get(p99_index).copied().unwrap_or(0.0);
+
+        // Print formatted results
+        println!(
+            "Image Quality {}x Delta E Comparison (lower is better):",
+            DELTA_E_DISPLAY_FACTOR
+        );
+        println!("  Min:    {:6.3}", min_delta_e);
+        println!("  Mean:   {:6.3}", mean_delta_e);
+        println!("  Median: {:6.3}", median_delta_e);
+        println!("  p75:    {:6.3}", p75_delta_e);
+        println!("  p90:    {:6.3}", p90_delta_e);
+        println!("  p95:    {:6.3}", p95_delta_e);
+        println!("  p99:    {:6.3}", p99_delta_e);
+        println!("  Max:    {:6.3}", max_delta_e);
+
         Ok(())
     }
 
