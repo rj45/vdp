@@ -5,7 +5,6 @@
 
 use std::fs::File;
 use std::io::{self, Write};
-use std::time::Instant;
 
 use image::{GenericImageView, Pixel, RgbImage};
 use kmeans::{KMeans, KMeansConfig};
@@ -31,6 +30,8 @@ const CHUNKS_PER_ROW: usize = 2;
 const PALETTE_INDEX_SHIFT: usize = 10;
 /// Delta E multiplier for error metrics display
 const DELTA_E_DISPLAY_FACTOR: f32 = 100.0;
+/// Maximum pixel value for PSNR calculation (8-bit color)
+const MAX_PIXEL_VALUE: f32 = 255.0;
 
 /// Errors that can occur during image conversion
 #[derive(Error, Debug)]
@@ -842,7 +843,13 @@ impl ImageConverter {
         let mut delta_e_values =
             Vec::with_capacity((self.config.total_width() * self.config.total_height()) as usize);
 
-        // Calculate delta_e for each pixel
+        // Variables for PSNR calculation
+        let mut mse_r: f64 = 0.0;
+        let mut mse_g: f64 = 0.0;
+        let mut mse_b: f64 = 0.0;
+        let mut pixel_count: usize = 0;
+
+        // Calculate delta_e for each pixel and squared errors for PSNR
         for (x, y, original_pixel) in original_img.pixels() {
             if x >= output_img.width() || y >= output_img.height() {
                 continue;
@@ -851,17 +858,27 @@ impl ImageConverter {
             let original_rgb = original_pixel.to_rgb();
             let output_pixel = output_img.get_pixel(x, y);
 
+            // Calculate Delta E
             let original_oklab = Oklab::from_rgb(original_rgb[0], original_rgb[1], original_rgb[2]);
             let output_oklab = Oklab::from_rgb(output_pixel[0], output_pixel[1], output_pixel[2]);
-
             let delta_e = oklab_delta_e(original_oklab, output_oklab) * DELTA_E_DISPLAY_FACTOR;
             delta_e_values.push(delta_e);
+
+            // Calculate squared error for each channel (for MSE/PSNR)
+            let diff_r = (original_rgb[0] as f64 - output_pixel[0] as f64).powi(2);
+            let diff_g = (original_rgb[1] as f64 - output_pixel[1] as f64).powi(2);
+            let diff_b = (original_rgb[2] as f64 - output_pixel[2] as f64).powi(2);
+
+            mse_r += diff_r;
+            mse_g += diff_g;
+            mse_b += diff_b;
+            pixel_count += 1;
         }
 
         // Sort the values to calculate percentiles
         delta_e_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Calculate statistics
+        // Calculate statistics for Delta E
         let min_delta_e = delta_e_values.first().copied().unwrap_or(0.0);
         let max_delta_e = delta_e_values.last().copied().unwrap_or(0.0);
 
@@ -883,9 +900,37 @@ impl ImageConverter {
         let p99_index = (delta_e_values.len() as f32 * 0.99) as usize;
         let p99_delta_e = delta_e_values.get(p99_index).copied().unwrap_or(0.0);
 
+        // Calculate PSNR for each channel and average
+        let mse_r = mse_r / pixel_count as f64;
+        let mse_g = mse_g / pixel_count as f64;
+        let mse_b = mse_b / pixel_count as f64;
+        let mse_avg = (mse_r + mse_g + mse_b) / 3.0;
+
+        // PSNR = 20 * log10(MAX_PIXEL_VALUE) - 10 * log10(MSE)
+        let psnr_r = if mse_r > 0.0 {
+            20.0 * (MAX_PIXEL_VALUE as f64).log10() - 10.0 * mse_r.log10()
+        } else {
+            f64::INFINITY
+        };
+        let psnr_g = if mse_g > 0.0 {
+            20.0 * (MAX_PIXEL_VALUE as f64).log10() - 10.0 * mse_g.log10()
+        } else {
+            f64::INFINITY
+        };
+        let psnr_b = if mse_b > 0.0 {
+            20.0 * (MAX_PIXEL_VALUE as f64).log10() - 10.0 * mse_b.log10()
+        } else {
+            f64::INFINITY
+        };
+        let psnr_avg = if mse_avg > 0.0 {
+            20.0 * (MAX_PIXEL_VALUE as f64).log10() - 10.0 * mse_avg.log10()
+        } else {
+            f64::INFINITY
+        };
+
         // Print formatted results
         println!(
-            "Image Quality {}x Delta E Comparison (lower is better):",
+            "\nImage Quality {}x Delta E Comparison (lower is better):",
             DELTA_E_DISPLAY_FACTOR
         );
         println!("  Min:    {:6.3}", min_delta_e);
@@ -896,6 +941,12 @@ impl ImageConverter {
         println!("  p95:    {:6.3}", p95_delta_e);
         println!("  p99:    {:6.3}", p99_delta_e);
         println!("  Max:    {:6.3}", max_delta_e);
+
+        println!("\nPSNR Quality Metrics (higher is better, 30.0-50.0 is good):");
+        println!("  Red channel:   {:6.3} dB", psnr_r);
+        println!("  Green channel: {:6.3} dB", psnr_g);
+        println!("  Blue channel:  {:6.3} dB", psnr_b);
+        println!("  Average PSNR:  {:6.3} dB", psnr_avg);
 
         Ok(())
     }
