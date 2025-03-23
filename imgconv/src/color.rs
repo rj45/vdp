@@ -77,18 +77,25 @@ impl Oklab {
         (self.a * self.a + self.b * self.b).sqrt()
     }
 
-    /// Add dithering error to this color
-    pub fn add_error(&self, error: &Self) -> Self {
-        Oklab::new(self.l + error.l, self.a + error.a, self.b + error.b)
+    /// Add another color to this color
+    pub fn add(&self, other: &Self) -> Self {
+        Oklab::new(self.l + other.l, self.a + other.a, self.b + other.b)
     }
 
     /// Calculate a scaled error term for dithering
-    pub fn error_term(&self, other: &Self, factor: f32, divisor: f32) -> Self {
+    pub fn dither_error_term(&self, other: &Self, factor: f32, divisor: f32) -> Self {
         Oklab::new(
             ((self.l - other.l) / divisor) * factor,
             ((self.a - other.a) / divisor) * factor,
             ((self.b - other.b) / divisor) * factor,
         )
+    }
+
+    #[inline]
+    pub fn weighted_add(&mut self, diff: &Oklab, weight: f32) {
+        self.l += diff.l * weight;
+        self.a += diff.a * weight;
+        self.b += diff.b * weight;
     }
 }
 

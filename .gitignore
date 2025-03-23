@@ -5,3 +5,4 @@ imgconv/target/*
 .DS_Store
 target/
 .aider*
+imgconv/out.png

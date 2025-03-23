@@ -520,9 +520,6 @@ impl ImageConverter {
             color.color.b /= color.frequency as f32;
         }
 
-        // Log error metrics for debugging
-        calculate_color_reduction_error(&color_frequencies, &new_colors, &result);
-
         Ok(new_colors)
     }
 
@@ -534,24 +531,16 @@ impl ImageConverter {
     ) -> Result<Vec<usize>, ConversionError> {
         let total_tiles = self.config.total_tiles();
         let mut tile_palette = Vec::with_capacity(total_tiles);
-        let mut max_tile_error: f32 = 0.0;
 
         // Find the best palette for each tile
         for y in 0..self.config.tilemap_height {
             for x in 0..self.config.tilemap_width {
                 let tile_index = (y * self.config.tilemap_width + x) as usize;
-                let (palette_index, error) =
-                    self.find_best_palette_for_tile(tiles, palettes, tile_index);
+                let palette_index = self.find_best_palette_for_tile(tiles, palettes, tile_index);
 
                 tile_palette.push(palette_index);
-                max_tile_error = max_tile_error.max(error);
             }
         }
-
-        println!(
-            "max_tile_error: {}",
-            max_tile_error / self.config.tile_width as f32 / self.config.tile_height as f32
-        );
 
         Ok(tile_palette)
     }
@@ -562,7 +551,7 @@ impl ImageConverter {
         tiles: &[Vec<Oklab>],
         palettes: &[Palette],
         tile_index: usize,
-    ) -> (usize, f32) {
+    ) -> usize {
         let mut min_error = f32::MAX;
         let mut min_palette = 0;
 
@@ -583,7 +572,7 @@ impl ImageConverter {
             }
         }
 
-        (min_palette, min_error)
+        min_palette
     }
 
     /// Quantize tiles based on assigned palettes
@@ -646,7 +635,7 @@ impl ImageConverter {
 
                         // Get original color, add dithering error if enabled
                         let color = if self.config.dithering {
-                            tiles[tile_index][i].add_error(&dither_error[gy * img_width + gx])
+                            tiles[tile_index][i].add(&dither_error[gy * img_width + gx])
                         } else {
                             tiles[tile_index][i]
                         };
@@ -689,44 +678,45 @@ impl ImageConverter {
         width: usize,
     ) {
         let img_height = self.config.total_height() as usize;
-        let diff = original.error_term(&quantized, self.config.dither_factor, DITHER_ERROR_DIVISOR);
+        let diff =
+            original.dither_error_term(&quantized, self.config.dither_factor, DITHER_ERROR_DIVISOR);
 
         // Sierra dithering pattern - Apply error diffusion to neighboring pixels
         // This is the classic Sierra filter pattern with 16 coefficients
 
         // Current row
         if x < width - 1 {
-            apply_error(&mut error[y * width + x + 1], &diff, 5.0);
+            error[y * width + x + 1].weighted_add(&diff, 5.0);
         }
         if x < width - 2 {
-            apply_error(&mut error[y * width + x + 2], &diff, 3.0);
+            error[y * width + x + 2].weighted_add(&diff, 3.0);
         }
 
         // Next row
         if y < img_height - 1 {
             if x > 1 {
-                apply_error(&mut error[(y + 1) * width + x - 2], &diff, 2.0);
+                error[(y + 1) * width + x - 2].weighted_add(&diff, 2.0);
             }
             if x > 0 {
-                apply_error(&mut error[(y + 1) * width + x - 1], &diff, 4.0);
+                error[(y + 1) * width + x - 1].weighted_add(&diff, 4.0);
             }
-            apply_error(&mut error[(y + 1) * width + x], &diff, 5.0);
+            error[(y + 1) * width + x].weighted_add(&diff, 5.0);
             if x < width - 1 {
-                apply_error(&mut error[(y + 1) * width + x + 1], &diff, 4.0);
+                error[(y + 1) * width + x + 1].weighted_add(&diff, 4.0);
             }
             if x < width - 2 {
-                apply_error(&mut error[(y + 1) * width + x + 2], &diff, 2.0);
+                error[(y + 1) * width + x + 2].weighted_add(&diff, 2.0);
             }
         }
 
         // Two rows below
         if y < img_height - 2 {
             if x > 0 {
-                apply_error(&mut error[(y + 2) * width + x - 1], &diff, 2.0);
+                error[(y + 2) * width + x - 1].weighted_add(&diff, 2.0);
             }
-            apply_error(&mut error[(y + 2) * width + x], &diff, 3.0);
+            error[(y + 2) * width + x].weighted_add(&diff, 3.0);
             if x < width - 1 {
-                apply_error(&mut error[(y + 2) * width + x + 1], &diff, 2.0);
+                error[(y + 2) * width + x + 1].weighted_add(&diff, 2.0);
             }
         }
     }
@@ -921,31 +911,4 @@ impl ImageConverter {
         serde_json::to_writer_pretty(file, data)?;
         Ok(())
     }
-}
-
-/// Apply error to a pixel in the error diffusion buffer
-#[inline]
-fn apply_error(error_pixel: &mut Oklab, diff: &Oklab, weight: f32) {
-    error_pixel.l += diff.l * weight;
-    error_pixel.a += diff.a * weight;
-    error_pixel.b += diff.b * weight;
-}
-
-/// Calculate and log error metrics for color reduction process
-fn calculate_color_reduction_error(
-    original_colors: &[ColorFrequency],
-    new_colors: &[ColorFrequency],
-    result: &kmeans::KMeansState<f32>,
-) {
-    // Calculate total weighted error
-    let mut total_error = 0.0;
-    for (i, color) in original_colors.iter().enumerate() {
-        let assignment = result.assignments[i];
-        let error =
-            oklab_delta_e(color.color, new_colors[assignment].color) * color.frequency as f32;
-        assert!(!error.is_nan());
-        total_error += error;
-    }
-
-    println!("Color reduction error: {} {}", result.distsum, total_error);
 }
