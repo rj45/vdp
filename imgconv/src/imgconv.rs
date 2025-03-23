@@ -5,8 +5,9 @@
 
 use std::fs::File;
 use std::io::{self, Write};
+use std::time::Instant;
 
-use image::{GenericImageView, Pixel};
+use image::{GenericImageView, Pixel, RgbImage};
 use kmeans::{KMeans, KMeansConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
