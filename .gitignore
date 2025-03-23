@@ -4,3 +4,4 @@ sim/*.hex
 imgconv/target/*
 .DS_Store
 target/
+.aider*
