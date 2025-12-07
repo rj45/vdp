@@ -1,4 +1,4 @@
-PIN_DEF ?= ulx3s_v20.lpf
+PIN_DEF ?= ulx3s/ulx3s_v20.lpf
 
 DEVICE ?= 85k
 

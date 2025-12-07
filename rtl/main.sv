@@ -3,6 +3,35 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
+typedef struct packed {
+    bit [12:0] tilemap_page;
+    bit [2:0]  width;
+    bit [12:0] texture_page;
+    bit [2:0]  extra_stride;
+} tilemap_metadata_t;
+
+typedef struct packed {
+    bit [3:0]  unused;
+    bit        y_flip;
+    bit        x_flip;
+    bit [6:0]  height;
+    bit [6:0]  tilemap_y;
+    bit [15:0] screen_y;
+} sprite_y_height_t;
+
+typedef struct packed {
+    bit [5:0]  unused;
+    bit [6:0]  width;
+    bit [6:0]  tilemap_x;
+    bit [15:0] screen_x;
+} sprite_x_width_t;
+
+typedef struct packed {
+    bit [3:0]  unused;
+    bit [15:0] tilemap_addr;
+    bit [15:0] tile_bitmap_addr;
+} sprite_addr_t;
+
 module main #(parameter CORDW=11) ( // coordinate width
     input  logic clk_pix,           // pixel clock
     input  logic rst_pix,           // pixel reset
@@ -25,6 +54,8 @@ module main #(parameter CORDW=11) ( // coordinate width
     logic             x0_frame;
     logic [CORDW-1:0] x0_sx;
     logic [CORDW-1:0] x0_sy;
+    logic [CORDW-1:0] x0_sy_plus1;
+    logic [CORDW-1:0] x0_sy_plus2;
     logic             x0_de;
     logic             x0_vsync;
     logic             x0_hsync;
@@ -35,6 +66,8 @@ module main #(parameter CORDW=11) ( // coordinate width
         .rst_pix,
         .sx(x0_sx),
         .sy(x0_sy),
+        .sy_plus1(x0_sy_plus1),
+        .sy_plus2(x0_sy_plus2),
         .hsync(x0_hsync),
         .vsync(x0_vsync),
         .de(x0_de),
@@ -72,19 +105,25 @@ module main #(parameter CORDW=11) ( // coordinate width
     // this isn't entirely required, since d0_line is already synchronized
     // and y should be stable by the time the pulse goes through CDC
     logic [CORDW-1:0] d0x0_sy;
+    logic [CORDW-1:0] d0x0_sy_plus1;
+    logic [CORDW-1:0] d0x0_sy_plus2;
     always_ff @(posedge clk_draw) begin
         d0x0_sy <= x0_sy;
+        d0x0_sy_plus1 <= x0_sy_plus1;
+        d0x0_sy_plus2 <= x0_sy_plus2;
     end
 
 
     // CDC from pix clock to draw clock -- part 2
-
     logic [CORDW-1:0] d0_sy;
-
+    logic [CORDW-1:0] d0_sy_plus1;
+    logic [CORDW-1:0] d0_sy_plus2;
     always_ff @(posedge clk_draw) begin
         // y should only increment on line going high
         if (d0_line) begin
             d0_sy <= d0x0_sy;
+            d0_sy_plus1 <= d0x0_sy_plus1;
+            d0_sy_plus2 <= d0x0_sy_plus2;
         end
     end
 
@@ -92,21 +131,23 @@ module main #(parameter CORDW=11) ( // coordinate width
     // Draw cycle d1: Calculate addresses
     //////////////////////////////////////////////////////////////////////
 
-    logic [11:0]  d1_lb_x;
-    logic [143:0] d1_unaligned_pixels;
-    logic [15:0]  d1_unaligned_valid_mask;
-    logic [2:0]   d1_alignment_shift;
+    logic [11:0]      d1_lb_x;
+    logic [143:0]     d1_unaligned_pixels;
+    logic [15:0]      d1_unaligned_valid_mask;
+    logic [2:0]       d1_alignment_shift;
 
-    logic [4:0]   d1_tile_map_y;
-    logic [4:0]   d1_tile_map_x;
-    logic [2:0]   d1_tile_row;
-    logic         d1_tile_col;
+    logic [4:0]       d1_tile_map_y;
+    logic [4:0]       d1_tile_map_x;
+    logic [2:0]       d1_tile_row;
+    logic             d1_tile_col;
 
-    logic [11:0]  d1_frame_counter;
-    logic [7:0]   d1_tile_counter;
+    logic [11:0]      d1_frame_counter;
+    logic [7:0]       d1_tile_counter;
 
-    logic         d1_line;
-    logic         d1_bufsel;
+    logic [CORDW-1:0] d1_sy_plus1;
+    logic [CORDW-1:0] d1_sy_plus2;
+    logic             d1_line;
+    logic             d1_bufsel;
 
     always_ff @(posedge clk_draw) begin
         if (d0_frame) d1_frame_counter <= d1_frame_counter + 1;
@@ -123,8 +164,8 @@ module main #(parameter CORDW=11) ( // coordinate width
         end else begin
             d1_lb_x <= d1_lb_x + 8;
 
-            d1_tile_map_y <= d0_sy[8:4];
-            d1_tile_row <= d0_sy[3:1]; // tile is 8 rows high, repeat each row 2 times
+            d1_tile_map_y <= d0_sy_plus1[8:4];
+            d1_tile_row <= d0_sy_plus1[3:1]; // tile is 8 rows high, repeat each row 2 times
             d1_tile_map_x <= d1_tile_counter[5:1];
             d1_tile_col <= d1_tile_counter[0];
 
@@ -132,7 +173,34 @@ module main #(parameter CORDW=11) ( // coordinate width
         end
 
         d1_line <= d0_line;
-        d1_bufsel <= d0_sy[0];
+        d1_bufsel <= d0_sy_plus1[0];
+        d1_sy_plus1 <= d0_sy_plus1;
+    end
+
+    //////////////////////////////////////////////////////////////////////
+    // Draw cycle d2: Load the sprite data from the sprite BRAM
+    //////////////////////////////////////////////////////////////////////
+
+    logic [8:0]       d2_sprite_index;
+    sprite_y_height_t d2_sprite_y_height;
+    sprite_x_width_t  d2_sprite_x_width;
+    sprite_addr_t     d2_sprite_addr;
+
+    sprite_bram #("sprites.hex") sprite_inst (
+        .clk_draw(clk_draw),
+        .sprite_index(d2_sprite_index),
+
+        .sprite_y_height(d2_sprite_y_height),
+        .sprite_x_width(d2_sprite_x_width),
+        .sprite_addr(d2_sprite_addr)
+    );
+
+    always_ff @(posedge clk_draw) begin
+        if (d1_line) begin
+            d2_sprite_index <= 0;
+        end else begin
+            d2_sprite_index <= d2_sprite_index + 1;
+        end
     end
 
     //////////////////////////////////////////////////////////////////////

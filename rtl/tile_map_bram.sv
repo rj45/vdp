@@ -15,7 +15,7 @@ module tile_map_bram #(parameter FILENAME="") (
   output logic [15:0] tile_map_data
 );
 
-    // This should be 1 BRAM on the ECP5
+    // This should be 1 BRAM on the ECP5, 4 on the up5k
     reg [15:0] rom[0:1023];
 
     initial begin

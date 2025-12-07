@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
-members = ["imgconv", "colortest"]
-default-members = ["imgconv"]
+members = ["imgconv", "colortest", "vdpemu"]
+# default-members = ["imgconv"]
 

@@ -23,6 +23,26 @@ module tile_bram #(parameter FILENAME="") (
   output logic [15:0] tile_data
 );
 
+`ifdef FPGA_ICE40
+    logic we = 1'b0;
+    logic data_in [15:0] = 16'b0;
+
+    SB_SPRAM256KA tile_spram (
+        .ADDRESS({
+            tile_y, tile_row,  // y index of the row
+            tile_x, tile_col   // x position of the tile pixels
+        }),
+        .DATAIN(data_in),
+        .MASKWREN(we),
+        .WREN(|we),
+        .CHIPSELECT(1'b1),
+        .CLOCK(clk_draw),
+        .STANDBY(1'b0),
+        .SLEEP(1'b0),
+        .POWEROFF(1'b1),
+        .DATAOUT(tile_data)
+    );
+`else
     // This should be 16 BRAMs on the ECP5
     reg [15:0] rom[0:16383];
 
@@ -37,5 +57,6 @@ module tile_bram #(parameter FILENAME="") (
             tile_x, tile_col   // x position of the tile pixels
         }];
     end
+`endif
 
 endmodule

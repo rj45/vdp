@@ -31,8 +31,46 @@ end
   //
   assign qp = clk_x5 ? ring_ctr[0] : ring_ctr[1];
   assign qn = clk_x5 ? ring_ctr[5] : ring_ctr[6];
+`elsif FPGA_ICE40
 
-`else
+  reg d_fall_r;
+  always @ (posedge clk or negedge rst_n)
+	if (!rst_n)
+		d_fall_r <= 1'b0;
+	else
+		d_fall_r <= d_fall;
+
+  SB_IO #(
+	.PIN_TYPE (6'b01_00_00),
+	//            |  |  |
+	//            |  |  \----- Registered input (and no clock!)
+	//            |  \-------- DDR output
+	//            \----------- Permanent output enable
+	.PULLUP (1'b 0)
+  ) buffer (
+	.PACKAGE_PIN  (qp),
+	.OUTPUT_CLK   (clk_x5),
+	.CLOCK_ENABLE (1'b1),
+	.D_OUT_0      (ring_ctr[0]),
+	.D_OUT_1      (ring_ctr[1])
+  );
+
+  SB_IO #(
+	.PIN_TYPE (6'b01_00_00),
+	//            |  |  |
+	//            |  |  \----- Registered input (and no clock!)
+	//            |  \-------- DDR output
+	//            \----------- Permanent output enable
+	.PULLUP (1'b 0)
+  ) buffer (
+	.PACKAGE_PIN  (qn),
+	.OUTPUT_CLK   (clk_x5),
+	.CLOCK_ENABLE (1'b1),
+	.D_OUT_0      (ring_ctr[5]),
+	.D_OUT_1      (ring_ctr[6])
+  );
+
+`elsif FPGA_ECP5
   // (pseudo-) differential DDR driver (ECP5 synthesis version)
   //*
   ODDRX1F ddrp( .Q(qp), .SCLK(clk_x5), .D0(ring_ctr[0]), .D1(ring_ctr[1]), .RST(1'b0) );

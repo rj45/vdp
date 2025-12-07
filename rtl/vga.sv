@@ -7,15 +7,17 @@
 `timescale 1ns / 1ps
 
 module vga #(parameter CORDW=11) (
-    input  logic clk_pix,   // pixel clock
-    input  logic rst_pix,   // reset in pixel clock domain
-    output logic [CORDW-1:0] sx,  // horizontal screen position
-    output logic [CORDW-1:0] sy,  // vertical screen position
-    output logic hsync,     // horizontal sync
-    output logic vsync,     // vertical sync
-    output logic de,        // data enable (low in blanking interval)
-    output logic line,      // reached end of line
-    output logic frame      // reached end of frame
+    input  logic             clk_pix,  // pixel clock
+    input  logic             rst_pix,  // reset in pixel clock domain
+    output logic [CORDW-1:0] sx,       // horizontal screen position
+    output logic [CORDW-1:0] sy,       // vertical screen position
+    output logic [CORDW-1:0] sy_plus1, // upcoming vertical screen position
+    output logic [CORDW-1:0] sy_plus2, // upcoming vertical screen position 2
+    output logic             hsync,    // horizontal sync
+    output logic             vsync,    // vertical sync
+    output logic             de,       // data enable (low in blanking interval)
+    output logic             line,     // reached end of line
+    output logic             frame     // reached end of frame
     );
 
     // horizontal timings (720p)
@@ -32,11 +34,15 @@ module vga #(parameter CORDW=11) (
 
     logic [CORDW-1:0] nsx;
     logic [CORDW-1:0] nsy;
+    logic [CORDW-1:0] nsy_plus1;
+    logic [CORDW-1:0] nsy_plus2;
     logic nhsync;
     logic nvsync;
     logic nde;
     logic nline;
     logic nframe;
+    logic nnframe;
+    logic nnnframe;
 
     always_comb begin
         nhsync = ~(nsx >= HS_STA && nsx < HS_END);  // invert: negative polarity
@@ -44,30 +50,50 @@ module vga #(parameter CORDW=11) (
         nde = (nsx <= HA_END && nsy <= VA_END);
         nline = (nsx == LINE);
         nframe = (nsx == LINE && nsy == SCREEN);
+        nnframe = (nsx == LINE && nsy_plus1 == SCREEN);
+        nnnframe = (nsx == LINE && nsy_plus2 == SCREEN);
     end
 
     // calculate horizontal and vertical screen position
     always_ff @(posedge clk_pix) begin
-        if (line) begin  // last pixel on line?
+        if (nline) begin  // last pixel on line?
             nsx <= 0;
-            nsy <= frame ? 0 : nsy + 1;  // last line on screen?
+            nsy <= nframe ? 0 : nsy + 1;  // last line on screen?
+            nsy_plus1 <= nnframe ? 0 : nsy_plus1 + 1;
+            nsy_plus2 <= nnnframe ? 0 : nsy_plus2 + 1;
         end else begin
             nsx <= nsx + 1;
         end
         if (rst_pix) begin
             nsx <= 0;
             nsy <= 0;
+            nsy_plus1 <= 1;
+            nsy_plus2 <= 2;
         end
     end
 
     // register everything for speed
     always_ff @(posedge clk_pix) begin
-        sx <= nsx;
-        sy <= nsy;
-        hsync <= nhsync;
-        vsync <= nvsync;
-        de <= nde;
-        line <= nline;
-        frame <= nframe;
+        if (rst_pix) begin
+            sx <= 0;
+            sy <= 0;
+            sy_plus1 <= 1;
+            sy_plus2 <= 2;
+            hsync <= 0;
+            vsync <= 0;
+            de <= 0;
+            line <= 0;
+            frame <= 0;
+        end else begin
+            sx <= nsx;
+            sy <= nsy;
+            sy_plus1 <= nsy_plus1;
+            sy_plus2 <= nsy_plus2;
+            hsync <= nhsync;
+            vsync <= nvsync;
+            de <= nde;
+            line <= nline;
+            frame <= nframe;
+        end
     end
 endmodule

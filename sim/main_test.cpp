@@ -68,6 +68,10 @@ int main(int argc, char* argv[]) {
     top->eval();
     top->clk_pix = 1;
     top->eval();
+    top->clk_pix = 0;
+    top->eval();
+    top->clk_pix = 1;
+    top->eval();
     top->sim_rst = 0;
     top->clk_pix = 0;
     top->eval();
@@ -97,13 +101,14 @@ int main(int argc, char* argv[]) {
         if (top->sdl_sy == V_RES && top->sdl_sx == 0) {
             // check for quit event
             SDL_Event e;
-            if (SDL_PollEvent(&e)) {
+            bool quit = false;
+            while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_QUIT) {
-                    break;
+                    quit = true;
                 }
+                if (keyb_state[SDL_SCANCODE_Q]) quit = true;  // quit if user presses 'Q'
             }
-
-            if (keyb_state[SDL_SCANCODE_Q]) break;  // quit if user presses 'Q'
+            if (quit) break;
 
             SDL_UpdateTexture(sdl_texture, NULL, screenbuffer, H_RES*sizeof(Pixel));
             SDL_RenderClear(sdl_renderer);
