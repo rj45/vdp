@@ -22,7 +22,7 @@ module top_test #(parameter CORDW=11) (  // coordinate width
     logic de;
     logic [7:0] r, g, b;
 
-    main test_inst (
+    vdp test_inst (
         .clk_pix,
         .rst_pix(sim_rst),
         .clk_draw(clk_pix),

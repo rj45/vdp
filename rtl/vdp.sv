@@ -1,4 +1,4 @@
-// (C) 2023 Ryan "rj45" Sanche, MIT License
+// (C) 2025 Ryan "rj45" Sanche, MIT License
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -32,7 +32,7 @@ typedef struct packed {
     bit [15:0] tile_bitmap_addr;
 } sprite_addr_t;
 
-module main #(parameter CORDW=11) ( // coordinate width
+module vdp #(parameter CORDW=11) ( // coordinate width
     input  logic clk_pix,           // pixel clock
     input  logic rst_pix,           // pixel reset
     input  logic clk_draw,          // draw clock

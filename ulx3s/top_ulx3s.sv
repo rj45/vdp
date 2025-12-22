@@ -58,7 +58,7 @@ module top_ulx3s  (
         );
 `endif
 
-    main main_inst (
+    vdp vdp_inst (
         .clk_draw(clk_draw),
         .rst_draw,
         .clk_pix,

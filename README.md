@@ -1,4 +1,4 @@
-# rjvdp
+# vdp
 
 A retro-inspired VDP built in Verilog for FPGA.
 
@@ -62,6 +62,20 @@ Pixels can be drawn to the line buffer at 4 pixels per clock, which is convenien
 Transparency masks can also be loaded with font data to allow a text mode. It is planned that tile maps and transparency masks can also be configured to be 16x8 pixels, allowing for a 16x8 font. Text is drawn into the tilemap in the lower 8 bits of each 16 bit word, which will select
 which transparency mask is used, and thus which character is drawn. The pixel data can be used
 to add texture to the text. A sprite can be drawn behind the text sprite to give background colors. Foreground colors can be selected by changing the palette index in the upper 8 bits of the tilemap.
+
+## Audio
+
+There is the beginnings of audio from nockieboy's work here: 
+
+https://github.com/nockieboy/YM2149_PSG_system/
+
+I found a different implementation of the YM2149 PSG by Matthew Hagerty here: 
+
+https://github.com/dnotq/ym2149_audio/ 
+
+## Credits
+
+This design is heavily inspired by the Neo Geo's VDP, with some ideas taken from the SNES and Gameboy PPUs.
 
 ## Contributing
 

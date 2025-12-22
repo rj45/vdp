@@ -11,7 +11,7 @@ prog: $(BUILDDIR)/toplevel.bit
 
 $(BUILDDIR)/toplevel.json: $(VERILOG)
 	mkdir -p $(BUILDDIR)
-	yosys -l $(BUILDDIR)/yosys.log --debug -q -p "synth_ecp5 -noabc9 -retime -abc2 -json $@" $^
+	yosys -l $(BUILDDIR)/yosys.log --debug -q -p "synth_ecp5 -abc2 -json $@" $^
 
 $(BUILDDIR)/%.config: $(PIN_DEF) $(BUILDDIR)/toplevel.json
 	nextpnr-ecp5 --${DEVICE} --package CABGA381 --speed 6 --tmg-ripup --timing-allow-fail --freq 25 --textcfg  $@ --json $(filter-out $<,$^) --lpf $<
