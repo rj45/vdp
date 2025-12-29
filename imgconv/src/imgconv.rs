@@ -88,6 +88,8 @@ pub struct Config {
     pub dither_factor: f32,
     /// Threshold for color similarity
     pub color_similarity_threshold: f32,
+    /// Maximum number of unique tiles (default 256, max 1024)
+    pub max_unique_tiles: usize,
 }
 
 impl Default for Config {
@@ -108,6 +110,7 @@ impl Default for Config {
             dithering: true,
             dither_factor: 0.75,
             color_similarity_threshold: 0.005,
+            max_unique_tiles: 256,
         }
     }
 }
@@ -203,14 +206,33 @@ pub struct TilemapEntry {
 }
 
 impl TilemapEntry {
-    /// Create a new tilemap entry with the given palette index
+    /// Create a new tilemap entry with the given palette and tile indices
     pub fn new(palette_index: usize, tile_index: usize) -> Self {
         TilemapEntry {
             palette_index,
             tile_index,
-            raw_value: (palette_index << PALETTE_INDEX_SHIFT) as u16,
+            raw_value: ((palette_index << PALETTE_INDEX_SHIFT) | tile_index) as u16,
         }
     }
+}
+
+/// Represents a unique tile after clustering
+#[derive(Debug, Clone)]
+pub struct UniqueTile {
+    /// The quantized pixel data
+    pub quantized: Vec<u16>,
+    /// Original tile index this was derived from (for debugging)
+    #[allow(dead_code)]
+    pub source_tile: usize,
+}
+
+/// Represents a tilemap position's assignment to a unique tile and palette
+#[derive(Debug, Clone)]
+pub struct TileAssignment {
+    /// Index into the unique tiles array
+    pub unique_tile_index: usize,
+    /// Palette index to use for this position
+    pub palette_index: usize,
 }
 
 /// Extract unique colors from a tile into a color frequency list
@@ -246,25 +268,33 @@ impl ImageConverter {
         // Generate palettes
         let palettes = self.generate_palettes(&raw_tiles)?;
 
-        // Assign palettes to tiles
+        // Assign palettes to tiles (initial assignment for quantization)
         let tile_palette_assignments = self.assign_palettes(&raw_tiles, &palettes)?;
 
-        // Quantize tiles
+        // Quantize tiles with initial palette assignments
         let quantized_tiles =
             self.quantize_tiles(&raw_tiles, &palettes, &tile_palette_assignments)?;
 
-        // Generate tilemap
-        let tilemap = self.generate_tilemap(&tile_palette_assignments)?;
+        // Cluster quantized tiles to find unique representative tiles
+        let unique_tiles =
+            self.cluster_quantized_tiles(&quantized_tiles, &tile_palette_assignments, &palettes)?;
+
+        // Find the best (unique_tile, palette) combination for each tilemap position
+        let tile_assignments = self.find_best_tile_assignments(&raw_tiles, &unique_tiles, &palettes);
+
+        // Generate tilemap with tile indices and palette indices
+        let tilemap = self.generate_tilemap_from_assignments(&tile_assignments);
 
         // Write output files
         self.write_palette_file(&palettes)?;
         self.write_tilemap_file(&tilemap)?;
-        self.write_tiles_file(&quantized_tiles)?;
+        self.write_tiles_file(&unique_tiles)?;
 
-        // Generate output image
-        let output_img = self.generate_output_image(&quantized_tiles, &palettes, &tilemap)?;
+        // Generate output image using unique tiles and assignments
+        let output_img =
+            self.generate_output_image_from_assignments(&unique_tiles, &palettes, &tile_assignments)?;
 
-        // Create data for JSON output
+        // Create data for JSON output (using original quantized tiles for compatibility)
         let tilemap_data = self.create_tilemap_data(raw_tiles, palettes, quantized_tiles, tilemap);
 
         // Write JSON if requested
@@ -376,6 +406,13 @@ impl ImageConverter {
             a.average_luminance()
                 .partial_cmp(&b.average_luminance())
                 .unwrap()
+        });
+
+        // fix palette 0, index 0 to be black
+        palettes.get_mut(0).map(|p| {
+            if let Some(color) = p.colors.get_mut(0) {
+                color.color = Oklab::from_rgb(0, 0, 0);
+            }
         });
 
         Ok(palettes)
@@ -582,6 +619,152 @@ impl ImageConverter {
         min_palette
     }
 
+    /// Cluster quantized tiles to find unique representative tiles
+    fn cluster_quantized_tiles(
+        &self,
+        quantized_tiles: &[Vec<u16>],
+        tile_palette_assignments: &[usize],
+        palettes: &[Palette],
+    ) -> Result<Vec<UniqueTile>, ConversionError> {
+        let num_tiles = quantized_tiles.len();
+
+        // If under max, no clustering needed - each tile is unique
+        if num_tiles <= self.config.max_unique_tiles {
+            return Ok(quantized_tiles
+                .iter()
+                .enumerate()
+                .map(|(i, q)| UniqueTile {
+                    quantized: q.clone(),
+                    source_tile: i,
+                })
+                .collect());
+        }
+
+        // Convert quantized tiles to color-space feature vectors for clustering
+        let tile_size = self.config.tile_size();
+        let feature_size = tile_size * 3; // 3 LAB components per pixel
+        let mut cluster_data = Vec::with_capacity(num_tiles * feature_size);
+
+        for (tile_idx, tile) in quantized_tiles.iter().enumerate() {
+            let palette = &palettes[tile_palette_assignments[tile_idx]];
+
+            // Convert each pixel to Oklab color
+            for chunk_idx in 0..(tile_size / PIXELS_PER_CHUNK) {
+                for pixel_offset in 0..PIXELS_PER_CHUNK {
+                    let color_idx =
+                        ((tile[chunk_idx] >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
+                    let color = palette
+                        .colors
+                        .get(color_idx)
+                        .map(|c| c.color)
+                        .unwrap_or_else(|| Oklab::new(0.0, 0.0, 0.0));
+                    cluster_data.push(color.l);
+                    cluster_data.push(color.a);
+                    cluster_data.push(color.b);
+                }
+            }
+        }
+
+        // Run k-means clustering
+        let kmean: KMeans<_, 8, _> =
+            KMeans::new(cluster_data, num_tiles, feature_size, OklabDistance);
+
+        let result = kmean.kmeans_lloyd(
+            self.config.max_unique_tiles,
+            KMEANS_MAX_ITERATIONS,
+            KMeans::init_kmeanplusplus,
+            &KMeansConfig::default(),
+        );
+
+        // Find representative tile for each cluster (the one assigned to that cluster)
+        let mut unique_tiles = Vec::with_capacity(self.config.max_unique_tiles);
+        let mut used_clusters = vec![false; self.config.max_unique_tiles];
+
+        for (tile_idx, &cluster_id) in result.assignments.iter().enumerate() {
+            if !used_clusters[cluster_id] {
+                used_clusters[cluster_id] = true;
+                unique_tiles.push(UniqueTile {
+                    quantized: quantized_tiles[tile_idx].clone(),
+                    source_tile: tile_idx,
+                });
+            }
+        }
+
+        println!(
+            "Clustered {} tiles into {} unique tiles",
+            num_tiles,
+            unique_tiles.len()
+        );
+
+        Ok(unique_tiles)
+    }
+
+    /// Find the best (unique_tile, palette) combination for each tilemap position
+    fn find_best_tile_assignments(
+        &self,
+        raw_tiles: &[Vec<Oklab>],
+        unique_tiles: &[UniqueTile],
+        palettes: &[Palette],
+    ) -> Vec<TileAssignment> {
+        let mut assignments = Vec::with_capacity(raw_tiles.len());
+
+        for original_tile in raw_tiles.iter() {
+            let mut best_error = f32::MAX;
+            let mut best_unique_idx = 0;
+            let mut best_palette_idx = 0;
+
+            // Try each unique tile with each palette
+            for (unique_idx, unique_tile) in unique_tiles.iter().enumerate() {
+                for (palette_idx, palette) in palettes.iter().enumerate() {
+                    let error = self.calculate_reconstruction_error(
+                        original_tile,
+                        &unique_tile.quantized,
+                        palette,
+                    );
+
+                    if error < best_error {
+                        best_error = error;
+                        best_unique_idx = unique_idx;
+                        best_palette_idx = palette_idx;
+                    }
+                }
+            }
+
+            assignments.push(TileAssignment {
+                unique_tile_index: best_unique_idx,
+                palette_index: best_palette_idx,
+            });
+        }
+
+        assignments
+    }
+
+    /// Calculate reconstruction error between original tile and quantized representation
+    fn calculate_reconstruction_error(
+        &self,
+        original: &[Oklab],
+        quantized: &[u16],
+        palette: &Palette,
+    ) -> f32 {
+        let mut total_error = 0.0;
+
+        for (pixel_idx, &original_color) in original.iter().enumerate() {
+            let chunk_idx = pixel_idx / PIXELS_PER_CHUNK;
+            let pixel_offset = pixel_idx % PIXELS_PER_CHUNK;
+
+            let color_idx =
+                ((quantized[chunk_idx] >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
+
+            if let Some(palette_color) = palette.colors.get(color_idx) {
+                total_error += oklab_delta_e(original_color, palette_color.color);
+            } else {
+                total_error += 1.0; // Penalty for missing color
+            }
+        }
+
+        total_error
+    }
+
     /// Quantize tiles based on assigned palettes
     fn quantize_tiles(
         &self,
@@ -728,25 +911,14 @@ impl ImageConverter {
         }
     }
 
-    /// Generate tilemap from palette assignments
-    fn generate_tilemap(
-        &self,
-        tile_palette_assignments: &[usize],
-    ) -> Result<Vec<u16>, ConversionError> {
-        let mut tilemap = Vec::with_capacity(tile_palette_assignments.len());
-
-        for y in 0..self.config.tilemap_height {
-            for x in 0..self.config.tilemap_width {
-                let tile_index = (y * self.config.tilemap_width + x) as usize;
-                let palette_idx = tile_palette_assignments[tile_index];
-
-                // Create tilemap entry with palette index in high bits
-                let entry = TilemapEntry::new(palette_idx, tile_index);
-                tilemap.push(entry.raw_value);
-            }
-        }
-
-        Ok(tilemap)
+    /// Generate tilemap from tile assignments (with unique tile indices)
+    fn generate_tilemap_from_assignments(&self, tile_assignments: &[TileAssignment]) -> Vec<u16> {
+        tile_assignments
+            .iter()
+            .map(|assignment| {
+                TilemapEntry::new(assignment.palette_index, assignment.unique_tile_index).raw_value
+            })
+            .collect()
     }
 
     /// Write palette data to hex file
@@ -783,42 +955,47 @@ impl ImageConverter {
         Ok(())
     }
 
-    /// Write tile data to hex file
-    fn write_tiles_file(&self, quantized_tiles: &[Vec<u16>]) -> Result<(), ConversionError> {
+    /// Write tile data to hex file (unique tiles only)
+    ///
+    /// Output format: 8 lines (one per tile row 0-7)
+    /// Each line: for each unique tile, write 2 chunks for that row
+    fn write_tiles_file(&self, unique_tiles: &[UniqueTile]) -> Result<(), ConversionError> {
         let mut tile_data_file = File::create(&self.config.output_tiles_hex)?;
 
-        for y in 0..self.config.tilemap_height {
-            for ty in 0..self.config.tile_height {
-                for x in 0..self.config.tilemap_width {
-                    let tile_index = (y * self.config.tilemap_width + x) as usize;
-                    let tile = &quantized_tiles[tile_index];
+        // For each row of the tile (0-7 for 8x8 tiles)
+        for row in 0..self.config.tile_height as usize {
+            // For each unique tile
+            for tile in unique_tiles.iter() {
+                let row_start = row * CHUNKS_PER_ROW;
 
-                    // Calculate which chunks to write for this row
-                    let row_start = ty as usize * CHUNKS_PER_ROW;
-                    let row_end = row_start + CHUNKS_PER_ROW;
-
-                    // Write the chunks for this row
-                    for tx in row_start..row_end {
-                        if tx < tile.len() {
-                            write!(&mut tile_data_file, "{:04x} ", tile[tx])?;
-                        } else {
-                            write!(&mut tile_data_file, "0000 ")?;
-                        }
+                // Write 2 chunks for this row of this tile
+                for chunk_offset in 0..CHUNKS_PER_ROW {
+                    let chunk_idx = row_start + chunk_offset;
+                    if chunk_idx < tile.quantized.len() {
+                        write!(&mut tile_data_file, "{:04x} ", tile.quantized[chunk_idx])?;
+                    } else {
+                        write!(&mut tile_data_file, "0000 ")?;
                     }
                 }
-                writeln!(&mut tile_data_file)?;
             }
+
+            // Pad remaining tiles if fewer than max_unique_tiles
+            for _ in unique_tiles.len()..self.config.max_unique_tiles {
+                write!(&mut tile_data_file, "0000 0000 ")?;
+            }
+
+            writeln!(&mut tile_data_file)?;
         }
 
         Ok(())
     }
 
-    /// Generate output image to visualize the result
-    fn generate_output_image(
+    /// Generate output image using unique tiles and tile assignments
+    fn generate_output_image_from_assignments(
         &self,
-        quantized_tiles: &[Vec<u16>],
+        unique_tiles: &[UniqueTile],
         palettes: &[Palette],
-        tilemap: &[u16],
+        tile_assignments: &[TileAssignment],
     ) -> Result<RgbImage, ConversionError> {
         let img_width = self.config.total_width();
         let img_height = self.config.total_height();
@@ -826,7 +1003,36 @@ impl ImageConverter {
 
         for y in 0..self.config.tilemap_height {
             for x in 0..self.config.tilemap_width {
-                self.render_tile(&mut out_img, quantized_tiles, palettes, tilemap, x, y)?;
+                let tilemap_idx = (y * self.config.tilemap_width + x) as usize;
+                let assignment = &tile_assignments[tilemap_idx];
+                let unique_tile = &unique_tiles[assignment.unique_tile_index];
+                let palette = &palettes[assignment.palette_index];
+
+                // Render this tile
+                for (chunk_idx, &chunk) in unique_tile.quantized.iter().enumerate() {
+                    let base_i = chunk_idx * PIXELS_PER_CHUNK;
+
+                    for pixel_offset in 0..PIXELS_PER_CHUNK {
+                        let pixel_idx = base_i + pixel_offset;
+                        if pixel_idx >= self.config.tile_size() {
+                            break;
+                        }
+
+                        let color_idx = ((chunk >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
+                        if let Some(color) = palette.colors.get(color_idx) {
+                            let (r, g, b) = color.color.to_rgb();
+
+                            let pixel_y = pixel_idx / self.config.tile_width as usize;
+                            let pixel_x = pixel_idx % self.config.tile_width as usize;
+
+                            out_img.put_pixel(
+                                x * self.config.tile_width + pixel_x as u32,
+                                y * self.config.tile_height + pixel_y as u32,
+                                image::Rgb([r, g, b]),
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -947,49 +1153,6 @@ impl ImageConverter {
         println!("  Green channel: {:6.3} dB", psnr_g);
         println!("  Blue channel:  {:6.3} dB", psnr_b);
         println!("  Average PSNR:  {:6.3} dB", psnr_avg);
-
-        Ok(())
-    }
-
-    /// Render a single tile to the output image
-    fn render_tile(
-        &self,
-        out_img: &mut image::ImageBuffer<image::Rgb<u8>, Vec<u8>>,
-        quantized_tiles: &[Vec<u16>],
-        palettes: &[Palette],
-        tilemap: &[u16],
-        tile_x: u32,
-        tile_y: u32,
-    ) -> Result<(), ConversionError> {
-        let tile_index = (tile_y * self.config.tilemap_width + tile_x) as usize;
-        let map_entry = tilemap[tile_index];
-        let palette_index =
-            ((map_entry >> PALETTE_INDEX_SHIFT) as usize) & (self.config.num_palettes - 1);
-        let palette = &palettes[palette_index];
-
-        for (chunk_idx, color) in quantized_tiles[tile_index].iter().enumerate() {
-            let base_i = chunk_idx * PIXELS_PER_CHUNK;
-
-            for pixel_offset in 0..PIXELS_PER_CHUNK {
-                if base_i + pixel_offset >= self.config.tile_size() {
-                    break;
-                }
-
-                let color_index = ((*color >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
-                if color_index < palette.colors.len() {
-                    let (r, g, b) = palette.colors[color_index].color.to_rgb();
-
-                    let pixel_y = (base_i + pixel_offset) / self.config.tile_width as usize;
-                    let pixel_x = (base_i + pixel_offset) % self.config.tile_width as usize;
-
-                    out_img.put_pixel(
-                        tile_x * self.config.tile_width + pixel_x as u32,
-                        tile_y * self.config.tile_height + pixel_y as u32,
-                        image::Rgb([r, g, b]),
-                    );
-                }
-            }
-        }
 
         Ok(())
     }
