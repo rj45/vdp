@@ -9,7 +9,7 @@ use std::io::{self, Write};
 
 use image::{GenericImageView, Pixel, RgbImage};
 use pathfinding::kuhn_munkres::kuhn_munkres_min;
-use kmeans::{KMeans, KMeansConfig};
+use kmeans::{EuclideanDistance, KMeans, KMeansConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -316,8 +316,8 @@ impl ImageConverter {
         let output_img =
             self.generate_output_image_from_assignments(&unique_tiles, &palettes, &tile_assignments)?;
 
-        // Create data for JSON output (using original quantized tiles for compatibility)
-        let tilemap_data = self.create_tilemap_data(raw_tiles, palettes, quantized_tiles, tilemap);
+        // Create data for JSON output
+        let tilemap_data = self.create_tilemap_data(raw_tiles, palettes, &unique_tiles, &tile_assignments, tilemap);
 
         // Write JSON if requested
         if let Some(json_path) = &self.config.output_json {
@@ -978,33 +978,62 @@ impl ImageConverter {
         let mut current_palettes = palettes.to_vec();
         let mut current_quantized = quantized_tiles.to_vec();
 
-        // Phase 1 & 2: Compute canonical structures and group by pattern
-        let mut structure_groups: HashMap<Vec<u8>, Vec<TileStructureInfo>> = HashMap::new();
+        // Phase 1: Compute canonical structures and build feature vectors for k-means
+        let tile_size = self.config.tile_size(); // 64 for 8x8 tiles
+        let num_tiles = current_quantized.len();
+        let mut structure_features: Vec<f32> = Vec::with_capacity(num_tiles * tile_size);
+        let mut tile_infos: Vec<TileStructureInfo> = Vec::with_capacity(num_tiles);
 
         for (tile_idx, quantized) in current_quantized.iter().enumerate() {
             let (canonical, mapping) = Self::compute_canonical_structure(quantized);
             let palette_idx = tile_palette_assignments[tile_idx];
 
-            structure_groups
-                .entry(canonical)
-                .or_default()
-                .push(TileStructureInfo {
-                    tile_idx,
-                    palette_idx,
-                    original_to_canonical: mapping,
-                });
+            // Add canonical pattern as features for k-means (64 floats per tile)
+            for &c in canonical.iter() {
+                structure_features.push(c as f32);
+            }
+
+            tile_infos.push(TileStructureInfo {
+                tile_idx,
+                palette_idx,
+                original_to_canonical: mapping,
+            });
+        }
+
+        // Phase 2: K-means clustering of structures into fuzzy groups
+        let target_clusters = self.config.max_unique_tiles.min(num_tiles);
+
+        let kmean: KMeans<_, 8, _> = KMeans::new(
+            structure_features,
+            num_tiles,
+            tile_size,
+            EuclideanDistance,
+        );
+
+        let result = kmean.kmeans_lloyd(
+            target_clusters,
+            KMEANS_MAX_ITERATIONS,
+            KMeans::init_kmeanplusplus,
+            &KMeansConfig::default(),
+        );
+
+        // Build groups from cluster assignments
+        let mut structure_groups: Vec<Vec<TileStructureInfo>> = vec![Vec::new(); target_clusters];
+        for (i, info) in tile_infos.into_iter().enumerate() {
+            let cluster_id = result.assignments[i];
+            structure_groups[cluster_id].push(info);
         }
 
         // Count groups with potential for sharing (size >= 2)
-        let sharing_groups: usize = structure_groups.values().filter(|g| g.len() >= 2).count();
+        let sharing_groups: usize = structure_groups.iter().filter(|g| g.len() >= 2).count();
         let total_shareable_tiles: usize = structure_groups
-            .values()
+            .iter()
             .filter(|g| g.len() >= 2)
             .map(|g| g.len())
             .sum();
 
         println!(
-            "Structure pass: {} structure groups with sharing potential ({} tiles)",
+            "Fuzzy structure clustering: {} clusters with sharing potential ({} tiles)",
             sharing_groups,
             total_shareable_tiles
         );
@@ -1013,7 +1042,7 @@ impl ImageConverter {
         // votes[palette_idx][(original_color, target_slot)] = weight
         let mut votes: Vec<HashMap<(usize, usize), i64>> = vec![HashMap::new(); num_palettes];
 
-        for tiles in structure_groups.values() {
+        for tiles in structure_groups.iter() {
             if tiles.len() < 2 {
                 continue; // No sharing benefit for singleton groups
             }
@@ -1402,14 +1431,15 @@ impl ImageConverter {
         &self,
         raw_tiles: Vec<Vec<Oklab>>,
         palettes: Vec<Palette>,
-        quantized_tiles: Vec<Vec<u16>>,
+        unique_tiles: &[UniqueTile],
+        tile_assignments: &[TileAssignment],
         tilemap: Vec<u16>,
     ) -> TilemapData {
         // Create tiles with both raw and quantized data
         let tiles: Vec<Tile> = raw_tiles
             .into_iter()
-            .zip(quantized_tiles)
-            .map(|(pixels, quantized)| Tile { pixels, quantized })
+            .zip(tile_assignments)
+            .map(|(pixels, assignment)| Tile { pixels, quantized: unique_tiles[assignment.unique_tile_index].quantized.clone() })
             .collect();
 
         // Create tilemap entries

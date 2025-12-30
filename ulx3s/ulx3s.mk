@@ -20,7 +20,7 @@ $(BUILDDIR)/toplevel.bit: $(BUILDDIR)/toplevel.config
 	ecppack --compress $^ $@
 
 ulx3s/pll.v:
-	ecppll -n pll -i 25 --clkout0_name clk_pix5x -o 300 --clkout1_name clk_pix --clkout1 60 --clkout2_name clk_draw --clkout2 60 -f ulx3s/pll.v
+	ecppll -n pll -i 25 --clkout0_name clk_pix5x -o 320 --clkout1_name clk_pix --clkout1 64 --clkout2_name clk_draw --clkout2 64 -f ulx3s/pll.v
 
 clean:
 	rm -rf ${BUILDDIR}

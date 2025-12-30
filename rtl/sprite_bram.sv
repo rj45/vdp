@@ -3,6 +3,8 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
+`include "sprite_types.sv"
+
 module sprite_bram #(parameter FILENAME="") (
     input  logic             clk_draw,
     input  logic [8:0]       sprite_index,
@@ -14,8 +16,8 @@ module sprite_bram #(parameter FILENAME="") (
     reg [(36*3)-1:0] sprite_data;
 
     initial begin
-    if (FILENAME!="")
-        $readmemh(FILENAME, bram);
+        if (FILENAME!="")
+            $readmemh(FILENAME, bram);
     end
 
     always_ff @(posedge clk_draw) begin

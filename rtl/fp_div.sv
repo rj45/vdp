@@ -158,8 +158,8 @@ always @(posedge clk_in) begin
 
         end
 
-            if (clk_cnt_m[mb-2:0]==(clk_per_int[mb-1:1]-1)) clk_p180 <= 1'b1 ; // generate the 180 degree phase pulse.
-            else                                            clk_p180 <= 1'b0 ; // clear the 180 degree phase pulse.
+        if (clk_cnt_m[mb-2:0]==(clk_per_int[mb-1:1]-1)) clk_p180 <= 1'b1 ; // generate the 180 degree phase pulse.
+        else                                            clk_p180 <= 1'b0 ; // clear the 180 degree phase pulse.
 
     end
 end

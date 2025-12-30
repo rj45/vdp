@@ -89,7 +89,7 @@ module double_buffer (
 
     // draw write ports
     always_comb begin
-        if (buffsel_draw) begin
+        if (~buffsel_draw) begin
             lb0_addr_draw = addr_on_draw;
             lb0_we_draw = {8{we_on_draw}};
             lb0_colour_draw = colour_on_draw;

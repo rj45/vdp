@@ -45,31 +45,18 @@ module vga #(parameter CORDW=11) (
     logic nnnframe;
 
     always_comb begin
-        nhsync = ~(nsx >= HS_STA && nsx < HS_END);  // invert: negative polarity
-        nvsync = ~(nsy >= VS_STA && nsy < VS_END);  // invert: negative polarity
-        nde = (nsx <= HA_END && nsy <= VA_END);
-        nline = (nsx == LINE);
-        nframe = (nsx == LINE && nsy == SCREEN);
-        nnframe = (nsx == LINE && nsy_plus1 == SCREEN);
-        nnnframe = (nsx == LINE && nsy_plus2 == SCREEN);
-    end
+        nhsync = ~(sx >= HS_STA && sx < HS_END);  // invert: negative polarity
+        nvsync = ~(sy >= VS_STA && sy < VS_END);  // invert: negative polarity
+        nde = (sx <= HA_END && sy <= VA_END);
+        nline = (sx == LINE);
+        nframe = (sx == LINE && sy == SCREEN);
+        nnframe = (sx == LINE && sy_plus1 == SCREEN);
+        nnnframe = (sx == LINE && sy_plus2 == SCREEN);
 
-    // calculate horizontal and vertical screen position
-    always_ff @(posedge clk_pix) begin
-        if (nline) begin  // last pixel on line?
-            nsx <= 0;
-            nsy <= nframe ? 0 : nsy + 1;  // last line on screen?
-            nsy_plus1 <= nnframe ? 0 : nsy_plus1 + 1;
-            nsy_plus2 <= nnnframe ? 0 : nsy_plus2 + 1;
-        end else begin
-            nsx <= nsx + 1;
-        end
-        if (rst_pix) begin
-            nsx <= 0;
-            nsy <= 0;
-            nsy_plus1 <= 1;
-            nsy_plus2 <= 2;
-        end
+        nsx = nline ? 0 : sx + 1;
+        nsy = nline ? (nframe ? 0 : sy + 1) : sy;
+        nsy_plus1 = nline ? (nnframe ? 0 : sy_plus1 + 1) : sy_plus1;
+        nsy_plus2 = nline ? (nnnframe ? 0 : sy_plus2 + 1) : sy_plus2;
     end
 
     // register everything for speed

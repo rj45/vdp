@@ -10,9 +10,8 @@
 
 module tile_map_bram #(parameter FILENAME="") (
   input  logic        clk_draw,
-  input  logic [4:0]  tile_y,
-  input  logic [4:0]  tile_x,
-  output logic [15:0] tile_map_data
+  input  logic [9:0]  tilemap_addr,
+  output logic [15:0] tilemap_data
 );
 
     // This should be 1 BRAM on the ECP5, 4 on the up5k
@@ -24,10 +23,7 @@ module tile_map_bram #(parameter FILENAME="") (
     end
 
     always_ff @(posedge clk_draw) begin
-        tile_map_data <= rom[{
-            tile_y,   // y index of the row
-            tile_x    // x position of the tilemap entry
-        }];
+        tilemap_data <= rom[tilemap_addr];
     end
 
 endmodule
