@@ -14,7 +14,7 @@ test: test.exe
 %.mk: top_%.sv
 	cp ../rtl/*.hex .
 	verilator ${VFLAGS} -I../rtl -I../rtl/fpgacpu_ca \
-		-cc $< --exe main_$(basename $@).cpp -o $(basename $@) \
+		-cc $< --exe main_$(basename $@).cpp sdram.cpp -o $(basename $@) \
 		-CFLAGS "${SDL_CFLAGS} -std=c++17" -LDFLAGS "${SDL_LDFLAGS}"
 
 all: test

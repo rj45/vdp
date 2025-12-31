@@ -7,6 +7,7 @@
 #include <SDL.h>
 #include <verilated.h>
 #include "Vtop_test.h"
+#include "sdram.h"
 
 // screen dimensions
 const int H_RES = 1280;
@@ -62,6 +63,9 @@ int main(int argc, char* argv[]) {
     // initialize Verilog module
     Vtop_test* top = new Vtop_test;
 
+    // 32MB SDRAM
+    SDRAM* sdram = new SDRAM(13, 9, FLAG_DATA_WIDTH_16 | FLAG_BANK_INTERLEAVING, "sdram_log.txt");
+
     // reset
     top->sim_rst = 1;
     top->clk_pix = 0;
@@ -79,14 +83,38 @@ int main(int argc, char* argv[]) {
     // initialize frame rate
     uint64_t start_ticks = SDL_GetPerformanceCounter();
     uint64_t frame_count = 0;
+    uint64_t ts = 0;
+    uint64_t sdram_d_out;
 
     // main loop
     while (1) {
         // cycle the clock
         top->clk_pix = 1;
+        ts += 8334;  // 60 MHz / 2 in picoseconds
         top->eval();
+        sdram->eval(ts,
+            // clock
+            top->sdram_clk, top->sdram_cke,
+            // command signals
+            top->sdram_csn, top->sdram_rasn, top->sdram_casn, top->sdram_wen,
+            // address
+            top->sdram_ba, top->sdram_a,
+            // data
+            top->sdram_dqm, top->sdram_d, sdram_d_out);
+        top->sdram_d = (SData)sdram_d_out;
+        ts += 8334;  // 60 MHz / 2 in picoseconds
         top->clk_pix = 0;
         top->eval();
+        sdram->eval(ts,
+            // clock
+            top->sdram_clk, top->sdram_cke,
+            // command signals
+            top->sdram_csn, top->sdram_rasn, top->sdram_casn, top->sdram_wen,
+            // address
+            top->sdram_ba, top->sdram_a,
+            // data
+            top->sdram_dqm, top->sdram_d, sdram_d_out);
+        top->sdram_d = (SData)sdram_d_out;
 
         // update pixel if not in blanking interval
         if (top->sdl_de) {
@@ -124,6 +152,7 @@ int main(int argc, char* argv[]) {
     double fps = (double)frame_count/duration;
     printf("Frames per second: %.1f\n", fps);
 
+    delete sdram;
     top->final();  // simulation done
 
     SDL_DestroyTexture(sdl_texture);

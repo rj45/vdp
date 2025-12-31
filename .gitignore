@@ -6,3 +6,4 @@ imgconv/target/*
 target/
 .aider*
 imgconv/out.png
+sdram_log.txt

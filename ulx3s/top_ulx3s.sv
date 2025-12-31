@@ -11,6 +11,18 @@
 module top_ulx3s  (
     input  wire logic clk_25mhz,           // input clock
 
+    // SDRAM
+    output      logic        sdram_clk,
+    output      logic        sdram_cke,
+    output      logic        sdram_csn,
+    output      logic        sdram_wen,
+    output      logic        sdram_rasn,
+    output      logic        sdram_casn,
+    output      logic [12:0] sdram_a,
+    output      logic [1:0]  sdram_ba,
+    output      logic [1:0]  sdram_dqm,
+    inout       logic [15:0] sdram_d,
+
     // HDMI
     output      logic [3:0]  gpdi_dp,
     output      logic [3:0]  gpdi_dn,
@@ -72,7 +84,18 @@ module top_ulx3s  (
         .de,
         .r,
         .g,
-        .b
+        .b,
+
+        .sdram_clk,
+        .sdram_cke,
+        .sdram_csn,
+        .sdram_wen,
+        .sdram_rasn,
+        .sdram_casn,
+        .sdram_a,
+        .sdram_ba,
+        .sdram_dqm,
+        .sdram_d
     );
 
     // blinky

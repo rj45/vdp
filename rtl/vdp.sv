@@ -17,8 +17,58 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     output logic hsync,             // horizontal sync
     output logic [7:0] r,           // 8-bit red
     output logic [7:0] g,           // 8-bit green
-    output logic [7:0] b            // 8-bit blue
+    output logic [7:0] b,           // 8-bit blue
+
+    // SDRAM
+    output      logic        sdram_clk,
+    output      logic        sdram_cke,
+    output      logic        sdram_csn,
+    output      logic        sdram_wen,
+    output      logic        sdram_rasn,
+    output      logic        sdram_casn,
+    output      logic [12:0] sdram_a,
+    output      logic [1:0]  sdram_ba,
+    output      logic [1:0]  sdram_dqm,
+    inout       logic [15:0] sdram_d
 );
+    ////////////////////////////////////////////////////////////////
+    // SDRAM controller
+    ////////////////////////////////////////////////////////////////
+
+    logic [22:0] ram_addr;
+    logic [31:0] ram_data;
+    logic        ram_we;
+    logic        ram_req;
+    logic        ram_ack;
+    logic        ram_valid;
+    logic [31:0] ram_q;
+
+    assign sdram_clk = clk_draw; // SDRAM clock runs at draw clock speed
+
+    sdram sdram_inst (
+        .reset(rst_draw),
+        .clk(clk_draw),
+        .addr(ram_addr),
+        .data(ram_data),
+        .we(ram_we),
+        .req(ram_req),
+        .ack(ram_ack),
+        .valid(ram_valid),
+        .q(ram_q),
+
+        .sdram_cke(sdram_cke),
+        .sdram_cs_n(sdram_csn),
+        .sdram_we_n(sdram_wen),
+        .sdram_ras_n(sdram_rasn),
+        .sdram_cas_n(sdram_casn),
+        .sdram_a(sdram_a),
+        .sdram_ba(sdram_ba),
+        .sdram_dqml(sdram_dqm[0]),
+        .sdram_dqmh(sdram_dqm[1]),
+        .sdram_dq(sdram_d)
+    );
+
+
     //////////////////////////////////////////////////////////////////////
     // Pix cycle p0 / Draw cycle d0: Generate the VGA signals
     //////////////////////////////////////////////////////////////////////

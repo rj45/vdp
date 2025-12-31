@@ -8,7 +8,7 @@ VERILOG = rtl/vdp.sv $(BOARD)/pll.v rtl/vga.sv rtl/hdmi.v rtl/palette_bram.sv \
 		  rtl/smoldvi_serializer.v rtl/smoldvi_tmds_encode.v \
 		  rtl/fpgacpu_ca/cdc_bit_synchronizer.sv rtl/fpgacpu_ca/pulse_generator.sv \
 		  rtl/fpgacpu_ca/cdc_pulse_synchronizer_2phase.sv rtl/fpgacpu_ca/register.sv \
-		  rtl/fpgacpu_ca/register_toggle.sv \
+		  rtl/fpgacpu_ca/register_toggle.sv rtl/sdram.sv \
 		  rtl/fp_div.sv rtl/i2s_transmitter.sv rtl/ym2149.sv \
 		  $(BOARD)/top_$(BOARD).sv
 
@@ -21,8 +21,11 @@ lint: $(VERILOG)
 
 test: $(TESTS)
 
-sim: $(VERILOG)
+sim: $(VERILOG) sim/Makefile sim/*.cpp sim/*.h
 	make -C sim run
+
+simclean:
+	make -C sim clean
 
 bin/%_tb: rtl/%.sv rtl/%_tb.sv
 	mkdir -p bin
