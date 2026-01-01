@@ -1,6 +1,7 @@
 BOARD ?= ulx3s
 
-SRCS = rtl/vdp.sv rtl/vga.sv rtl/hdmi.sv rtl/palette_bram.sv \
+SRCS = rtl/vdp.sv rtl/vga.sv rtl/hdmi.sv \
+	   rtl/pix_pipeline.sv rtl/palette_bram.sv \
        rtl/linebuffer_bram.sv rtl/double_buffer.sv rtl/pixel_doubler.sv \
        rtl/tile_map_bram.sv rtl/tile_bram.sv rtl/shift_aligner.sv \
        rtl/sprite_bram.sv rtl/active_bram.sv rtl/sprite_matcher.sv \

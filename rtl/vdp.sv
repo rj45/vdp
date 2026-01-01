@@ -1,4 +1,4 @@
-// (C) 2025 Ryan "rj45" Sanche, MIT License
+// (C) 2026 Ryan "rj45" Sanche, MIT License
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -386,12 +386,7 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     // Pix cycle p1: Read the line buffer
     ////////////////////////////////////////////////////////////////
 
-    logic [8:0]       p1_colour_pix;
-    logic [CORDW-1:0] p1_sx;
-    logic [CORDW-1:0] p1_sy;
-    logic             p1_de;
-    logic             p1_vsync;
-    logic             p1_hsync;
+    logic [8:0]       lb_colour_pix;
 
     double_buffer lb_inst (
         .clk_pix,
@@ -401,7 +396,7 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         .buffsel_draw(d6_bufsel),
 
         .addr_on_pix({1'd0,x0_sx}),
-        .colour_on_pix(p1_colour_pix),
+        .colour_on_pix(lb_colour_pix),
 
         .addr_on_draw(d0_clear_addr), // for now
         .we_on_draw(d0_clearing), // for now
@@ -412,82 +407,29 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         .colour_off_draw(d6_lb_colour_draw)
     );
 
-    always_ff @(posedge clk_pix) begin
-        p1_sx <= x0_sx;
-        p1_sy <= x0_sy;
-        p1_de <= x0_de;
-        p1_vsync <= x0_vsync;
-        p1_hsync <= x0_hsync;
-    end
-
     ////////////////////////////////////////////////////////////////
-    // Pix cycle p1b: Lookup the palette entry
+    // Pix pipeline
     ////////////////////////////////////////////////////////////////
 
-    logic [CORDW-1:0] p1b_sx;
-    logic [CORDW-1:0] p1b_sy;
-    logic             p1b_de;
-    logic             p1b_vsync;
-    logic             p1b_hsync;
-    logic [8:0]       p1b_colour_pix;
+    pix_pipeline #(CORDW) pix_pipeline_inst (
+        .clk_pix(clk_pix),
+        // .rst_pix(rst_pix),
 
+        .i_colour(lb_colour_pix),
+        .i_sx(x0_sx),
+        .i_sy(x0_sy),
+        .i_de(x0_de),
+        .i_vsync(x0_vsync),
+        .i_hsync(x0_hsync),
 
-    always_ff @(posedge clk_pix) begin
-        p1b_sx <= p1_sx;
-        p1b_sy <= p1_sy;
-        p1b_de <= p1_de;
-        p1b_vsync <= p1_vsync;
-        p1b_hsync <= p1_hsync;
-        p1b_colour_pix <= p1_colour_pix;
-    end
-
-
-    ////////////////////////////////////////////////////////////////
-    // Pix cycle p2: Lookup the palette entry
-    ////////////////////////////////////////////////////////////////
-
-    logic [CORDW-1:0] p2_sx;
-    logic [CORDW-1:0] p2_sy;
-    logic             p2_de;
-    logic             p2_vsync;
-    logic             p2_hsync;
-    logic [23:0]      p2_rgb;
-    logic [7:0]       p2_r;
-    logic [7:0]       p2_g;
-    logic [7:0]       p2_b;
-
-    palette_bram #("palette.hex") palbram_inst (
-        .clk_pix,
-        .colour_pix(p1b_colour_pix),
-        .rgb(p2_rgb)
+        .o_sx(sx),
+        .o_sy(sy),
+        .o_de(de),
+        .o_vsync(vsync),
+        .o_hsync(hsync),
+        .o_r(r),
+        .o_g(g),
+        .o_b(b)
     );
-
-    assign p2_r = p2_rgb[23:16];
-    assign p2_g = p2_rgb[15:8];
-    assign p2_b = p2_rgb[7:0];
-
-    always_ff @(posedge clk_pix) begin
-        p2_sx <= p1b_sx;
-        p2_sy <= p1b_sy;
-        p2_de <= p1b_de;
-        p2_vsync <= p1b_vsync;
-        p2_hsync <= p1b_hsync;
-    end
-
-    ////////////////////////////////////////////////////////////////
-    // Pix cycle p3: Output to screen
-    ////////////////////////////////////////////////////////////////
-
-    always_ff @(posedge clk_pix) begin
-        sx <= p2_sx;
-        sy <= p2_sy;
-        de <= p2_de;
-        vsync <= p2_vsync;
-        hsync <= p2_hsync;
-
-        r <= p2_de ? p2_r : 8'h0;
-        g <= p2_de ? p2_g : 8'h0;
-        b <= p2_de ? p2_b : 8'h0;
-    end
 
 endmodule

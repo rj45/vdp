@@ -1,3 +1,7 @@
+// (C) 2026 Ryan "rj45" Sanche, MIT License
+//
+// Data types for sprite handling
+
 `ifndef SPRITE_TYPES_SV
 `define SPRITE_TYPES_SV
 
