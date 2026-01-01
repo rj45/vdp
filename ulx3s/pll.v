@@ -31,11 +31,11 @@ EHXPLLL #(
         .CLKOP_FPHASE(0),
         .CLKOS_ENABLE("ENABLED"),
         .CLKOS_DIV(10),
-        .CLKOS_CPHASE(1),
+        .CLKOS_CPHASE(9),
         .CLKOS_FPHASE(0),
         .CLKOS2_ENABLE("ENABLED"),
         .CLKOS2_DIV(10),
-        .CLKOS2_CPHASE(1),
+        .CLKOS2_CPHASE(9),
         .CLKOS2_FPHASE(0),
         .FEEDBK_PATH("CLKOP"),
         .CLKFB_DIV(64)
