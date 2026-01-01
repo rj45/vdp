@@ -71,9 +71,6 @@ module double_buffer (
         .colour_draw(lb1_colour_draw)
     );
 
-    // The addr_on_pix needs to be delayed by one cycle because the bram takes a cycle to read
-    logic [2:0]  prev_addr_on_pix;
-
     // handle the pix side reading
     always_comb begin
         if (buffsel_pix) begin

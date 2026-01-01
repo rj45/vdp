@@ -35,6 +35,8 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     // SDRAM controller
     ////////////////////////////////////////////////////////////////
 
+    // verilator lint_off UNDRIVEN
+    // verilator lint_off UNUSEDSIGNAL
     logic [22:0] ram_addr;
     logic [31:0] ram_data;
     logic        ram_we;
@@ -42,6 +44,8 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     logic        ram_ack;
     logic        ram_valid;
     logic [31:0] ram_q;
+    // verilator lint_on UNDRIVEN
+    // verilator lint_on UNUSEDSIGNAL
 
     assign sdram_clk = clk_draw; // SDRAM clock runs at draw clock speed
 
@@ -77,7 +81,9 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     logic             x0_frame;
     logic [CORDW-1:0] x0_sx;
     logic [CORDW-1:0] x0_sy;
+    // verilator lint_off UNUSEDSIGNAL
     logic [CORDW-1:0] x0_sy_plus1;
+    // verilator lint_on UNUSEDSIGNAL
     logic [CORDW-1:0] x0_sy_plus2;
     logic             x0_de;
     logic             x0_vsync;
@@ -124,46 +130,28 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         .receiving_pulse_out(d0_frame)
     );
 
-
-    // CDC of de from pix clock to draw clock
-    logic d0_de;
-    cdc_pulse_synchronizer_2phase de_cdc (
-        .sending_clock(clk_pix),
-        .sending_pulse_in(x0_de),
-        // verilator lint_off PINCONNECTEMPTY
-        // .sending_ready(),
-        // verilator lint_on PINCONNECTEMPTY
-
-        .receiving_clock(clk_draw),
-        .receiving_pulse_out(d0_de)
-    );
-
     // CDC from pix clock to draw clock -- part 1
     // this isn't entirely required, since d0_line is already synchronized
     // and y should be stable by the time the pulse goes through CDC
-    logic [CORDW-1:0] d0x0_sy;
-    logic [CORDW-1:0] d0x0_sy_plus1;
     logic [CORDW-1:0] d0x0_sy_plus2;
     logic [CORDW-1:0] d0x0_sx;
+    logic             d0x0_bufsel;
     always_ff @(posedge clk_draw) begin
-        d0x0_sy <= x0_sy;
-        d0x0_sy_plus1 <= x0_sy_plus1;
+        d0x0_bufsel <= x0_sy_plus1[0];
         d0x0_sy_plus2 <= x0_sy_plus2;
         d0x0_sx <= x0_sx;
     end
 
 
     // CDC from pix clock to draw clock -- part 2
-    logic [CORDW-1:0] d0_sy;
-    logic [CORDW-1:0] d0_sy_plus1;
     logic [CORDW-1:0] d0_sy_plus2;
     logic [CORDW-1:0] d0_sx;
+    logic             d0_bufsel;
     always_ff @(posedge clk_draw) begin
         // y should only increment on line going high
         if (d0_line) begin
-            d0_sy <= d0x0_sy;
-            d0_sy_plus1 <= d0x0_sy_plus1;
             d0_sy_plus2 <= d0x0_sy_plus2;
+            d0_bufsel <= d0x0_bufsel;
         end
 
         d0_sx <= d0x0_sx;
@@ -179,7 +167,6 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     logic             d1_sprite_loading;
     logic             d1_sprite_loaded;
 
-    logic [CORDW-1:0] d1_sy_plus1;
     logic [CORDW-1:0] d1_sy_plus2;
     logic             d1_line;
     logic             d1_bufsel;
@@ -199,8 +186,7 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         end
 
         d1_line <= d0_line;
-        d1_bufsel <= d0_sy_plus1[0];
-        d1_sy_plus1 <= d0_sy_plus1;
+        d1_bufsel <= d0_bufsel;
         d1_sy_plus2 <= d0_sy_plus2;
         d1_sprite_loaded <= d1_sprite_loading;
     end
@@ -213,8 +199,10 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     logic [11:0]          d2_sprite_x;
 
     logic                 d2_sprite_valid;
+    // verilator lint_off UNUSEDSIGNAL
     active_tilemap_addr_t d2_tilemap_addr;
     active_bitmap_addr_t  d2_bitmap_addr;
+    // verilator lint_on UNUSEDSIGNAL
 
     logic                 d2_line;
     logic                 d2_bufsel;
@@ -266,7 +254,9 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     //////////////////////////////////////////////////////////////////////
 
     logic [11:0]  d3_lb_x;
-    logic [15:0]  d3_tilemap_data;
+    // verilator lint_off UNUSEDSIGNAL
+    logic [15:0]  d3_tilemap_data; // bit 15 currently unused, remove lint_off when fixed
+    // verilator lint_on UNUSEDSIGNAL
     logic         d3_line;
     logic         d3_bufsel;
 
@@ -299,7 +289,7 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     tile_bram #("tiles.hex") tile_inst (
         .clk_draw(clk_draw),
         // FIXME: the ~d2_sprite_x[0] is a temporary hack to fix a timing issue elsewhere
-        .tile_addr(d2_bitmap_addr.tile_bitmap_addr[13:0] + {5'd0, d3_tilemap_data[7:0], 1'd0} + {13'd0, ~d2_sprite_x[0]}),
+        .tile_addr(d2_bitmap_addr.tile_bitmap_addr[13:0] + {3'd0, d3_tilemap_data[9:0], 1'd0} + {13'd0, ~d2_sprite_x[0]}),
 
         .tile_data(d4_tile_data)
     );

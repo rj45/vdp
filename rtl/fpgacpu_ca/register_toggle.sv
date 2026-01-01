@@ -15,7 +15,7 @@ module register_toggle
     output  logic    [WORD_WIDTH-1:0]    data_out
 );
 
-    reg [WORD_WIDTH-1:0] new_value = {WORD_WIDTH{1'b0}};
+    reg [WORD_WIDTH-1:0] new_value;
 
     register #(
         .WORD_WIDTH     (WORD_WIDTH),

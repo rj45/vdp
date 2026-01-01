@@ -20,9 +20,11 @@ module sprite_matcher (
     parameter FILENAME = "sprites.hex";
 
     logic [8:0]       scan_index;
+    // verilator lint_off UNUSEDSIGNAL
     sprite_y_height_t sprite_y_height;
     sprite_x_width_t  sprite_x_width;
     sprite_addr_t     sprite_addr;
+    // verilator lint_on UNUSEDSIGNAL
 
     sprite_bram #(FILENAME) sprite_inst (
         .clk_draw(clk_draw),
@@ -118,7 +120,7 @@ module sprite_matcher (
         end
     end
 
-    always_ff @(posedge clk_draw) begin
+    always_ff @(posedge clk_draw or posedge rst_draw) begin
         if (rst_draw) begin
             p2_start_index  <= 9'h0;
             p2_last_index   <= 9'h0;

@@ -149,7 +149,7 @@
 //
 
 
-module ym2149_audio #(
+module ym2149 #(
     // Non-custom PSG address mask is 0000.
     parameter logic [3:0] ADDRESS_G = 4'h0
 ) (

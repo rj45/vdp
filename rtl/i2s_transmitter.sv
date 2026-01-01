@@ -1,6 +1,6 @@
 // Initial I2S_transmitter code, untested, by nockieboy August 2022.
 
-module I2S_transmitter #(
+module i2s_transmitter #(
 
     parameter int           BITS     = 16,      // Audio width, can be anything from 8 to 24
     parameter bit           INV_BCLK = 0        // When set, make I2S_BCLK fall during valid data

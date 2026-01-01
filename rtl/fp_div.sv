@@ -27,7 +27,7 @@
 //
 // ******************************************************************************************************
 
-module BHG_FP_clk_divider (
+module fp_div (
 
     input        clk_in         , // System source clock.
     input        rst_in         , // Synchronous reset.
@@ -45,8 +45,9 @@ parameter OUTPUT_CLK_HZ       = 3579545   ; // Desired clk_out frequency in Hz.
 // ****************************************************************************
 // Inoperable Parameter Error
 // ****************************************************************************
+// verilator lint_off GENUNNAMED
 generate
-if ( (OUTPUT_CLK_HZ*2)>INPUT_CLK_HZ )  initial begin
+if ( (OUTPUT_CLK_HZ*2)>INPUT_CLK_HZ ) initial begin
 $display("");
 $display("  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
 $display("  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");

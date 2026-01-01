@@ -129,7 +129,6 @@ module sdram #(
     localparam logic [3:0] CMD_ACTIVE       = 4'b0011;
     localparam logic [3:0] CMD_WRITE        = 4'b0100;
     localparam logic [3:0] CMD_READ         = 4'b0101;
-    localparam logic [3:0] CMD_STOP         = 4'b0110;
     localparam logic [3:0] CMD_NOP          = 4'b0111;
 
     // the ordering of the accesses within a burst
