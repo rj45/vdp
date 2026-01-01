@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
         top->sdram_d = (SData)sdram_d_out;
 
         // update pixel if not in blanking interval
-        if (top->sdl_de) {
+        if (top->sdl_de && (top->sdl_sy < V_RES) && (top->sdl_sx < H_RES)) {
             Pixel* p = &screenbuffer[top->sdl_sy*H_RES + top->sdl_sx];
             p->a = 0xFF;  // transparency
             p->b = top->sdl_b;

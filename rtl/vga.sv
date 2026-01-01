@@ -45,7 +45,7 @@ module vga #(parameter CORDW=11) (
     logic nnnframe;
 
     always_comb begin
-        nhsync = ~(sx >= HS_STA && sx < HS_END);  // invert: negative polarity
+        nhsync = (sx >= HS_STA && sx < HS_END);
         nvsync = ~(sy >= VS_STA && sy < VS_END);  // invert: negative polarity
         nde = (sx <= HA_END && sy <= VA_END);
         nline = (sx == LINE);

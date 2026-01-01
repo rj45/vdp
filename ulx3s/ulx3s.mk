@@ -11,16 +11,16 @@ prog: $(BUILDDIR)/toplevel.bit
 
 $(BUILDDIR)/toplevel.json: $(VERILOG)
 	mkdir -p $(BUILDDIR)
-	yosys -l $(BUILDDIR)/yosys.log --debug -q -p "synth_ecp5 -abc2 -json $@" $^
+	yosys -l $(BUILDDIR)/yosys.log --debug -q -D FPGA_ECP5 -p "synth_ecp5 -abc2 -json $@" $^
 
 $(BUILDDIR)/%.config: $(PIN_DEF) $(BUILDDIR)/toplevel.json
-	nextpnr-ecp5 --${DEVICE} --package CABGA381 --speed 6 --tmg-ripup --timing-allow-fail --freq 25 --textcfg  $@ --json $(filter-out $<,$^) --lpf $<
+	nextpnr-ecp5 --${DEVICE} --package CABGA381 --speed 6 --seed 49 --tmg-ripup --timing-allow-fail --ignore-rel-clk --freq 25 --textcfg  $@ --json $(filter-out $<,$^) --lpf $<
 
 $(BUILDDIR)/toplevel.bit: $(BUILDDIR)/toplevel.config
 	ecppack --compress $^ $@
 
 ulx3s/pll.v:
-	ecppll -n pll -i 25 --clkout0_name clk_pix5x -o 300 --clkout1_name clk_pix --clkout1 60 --clkout2_name clk_draw --clkout2 60 -f ulx3s/pll.v
+	ecppll -n pll -i 25 --clkout0_name clk_pix5x -o 300 --clkout1_name clk_pix --phase1 0 --clkout1 60 --clkout2_name clk_draw --clkout2 60 -f ulx3s/pll.v
 
 clean:
 	rm -rf ${BUILDDIR}

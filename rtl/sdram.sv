@@ -151,6 +151,8 @@ module sdram #(
     // calculate the clock period (in nanoseconds)
     localparam real CLK_PERIOD = 1.0 / CLK_FREQ * 1000.0;
 
+    // verilator lint_off WIDTHTRUNC
+
     // the number of clock cycles to wait before initialising the device
     localparam logic [13:0] INIT_WAIT = $rtoi($ceil(T_DESL / CLK_PERIOD));
 
@@ -178,7 +180,9 @@ module sdram #(
 
     // the number of clock cycles before the memory controller needs to refresh
     // the SDRAM
-    localparam logic [13:0] REFRESH_INTERVAL = $rtoi($floor(T_REFI / CLK_PERIOD)) - 10;
+    localparam logic [9:0] REFRESH_INTERVAL = $rtoi($floor(T_REFI / CLK_PERIOD)) - 10;
+
+    // verilator lint_on WIDTHTRUNC
 
     typedef enum logic [2:0] {
         INIT,
