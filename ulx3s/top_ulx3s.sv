@@ -25,12 +25,14 @@ module top_ulx3s  (
     // output      logic [1:0]  sdram_dqm,
     // inout       logic [15:0] sdram_d,
 
-    // HDMI
+    // HDMI -- `gpdi_dn` are handled by the constraints as differential pairs
     output      logic [3:0]  gpdi_dp,
-    output      logic [3:0]  gpdi_dn,
 
     output      logic [7:0]  led
     );
+
+    // these aren't used as the gdpi_dp outputs are marked as differential pairs in the constraints
+    logic [3:0]  gpdi_dn;
 
     // don't hook directly into the sdram
     logic        sdram_clk;

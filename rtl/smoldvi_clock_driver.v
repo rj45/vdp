@@ -74,7 +74,9 @@ end
   // (pseudo-) differential DDR driver (ECP5 synthesis version)
   //*
   ODDRX1F ddrp( .Q(qp), .SCLK(clk_x5), .D0(ring_ctr[0]), .D1(ring_ctr[1]), .RST(1'b0) );
-  ODDRX1F ddrn( .Q(qn), .SCLK(clk_x5), .D0(ring_ctr[5]), .D1(ring_ctr[6]), .RST(1'b0) );
+
+  // It's marked as LVCMOS33D in the constraints, so the `n` side of the pair should work automatically
+  // ODDRX1F ddrn( .Q(qn), .SCLK(clk_x5), .D0(ring_ctr[5]), .D1(ring_ctr[6]), .RST(1'b0) );
 `endif
 
 endmodule

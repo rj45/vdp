@@ -1,7 +1,9 @@
+// Copyright (C) 2025 Ryan "rj45" Sanche, MIT License
+//
+// Originally vaguely based on:
 // Project F: FPGA Graphics - Simple VGA timing controller
 // (C)2023 Will Green, open source hardware released under the MIT License
 // Learn more at https://projectf.io/posts/fpga-graphics/
-// Modified by (C) 2023 Ryan "rj45" Sanche, MIT License
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -22,14 +24,14 @@ module vga #(parameter CORDW=11) (
 
     // horizontal timings (720p)
     parameter HA_END = 1279;           // end of active pixels
-    parameter HS_STA = HA_END + 8;     // sync starts after front porch
+    parameter HS_STA = HA_END + 48;    // sync starts after front porch
     parameter HS_END = HS_STA + 32;    // sync ends
-    parameter LINE   = 1359;           // last pixel on line (after back porch)
+    parameter LINE   = 1439;           // last pixel on line (after back porch)
 
     // vertical timings
     parameter VA_END = 719;            // end of active pixels
-    parameter VS_STA = VA_END + 7;     // sync starts after front porch
-    parameter VS_END = VS_STA + 8;     // sync ends
+    parameter VS_STA = VA_END + 3;     // sync starts after front porch
+    parameter VS_END = VS_STA + 5;     // sync ends
     parameter SCREEN = 740;            // last line on screen (after back porch)
 
     logic [CORDW-1:0] nsx;
@@ -43,20 +45,60 @@ module vga #(parameter CORDW=11) (
     logic nframe;
     logic nnframe;
     logic nnnframe;
+    logic hblank;
+    logic vblank;
+    logic nhblank;
+    logic nvblank;
 
     always_comb begin
-        nhsync = (sx >= HS_STA && sx < HS_END);
-        nvsync = ~(sy >= VS_STA && sy < VS_END);  // invert: negative polarity
-        nde = (sx <= HA_END && sy <= VA_END);
         nline = (sx == LINE);
         nframe = (sx == LINE && sy == SCREEN);
         nnframe = (sx == LINE && sy_plus1 == SCREEN);
         nnnframe = (sx == LINE && sy_plus2 == SCREEN);
 
-        nsx = nline ? 0 : sx + 1;
-        nsy = nline ? (nframe ? 0 : sy + 1) : sy;
-        nsy_plus1 = nline ? (nnframe ? 0 : sy_plus1 + 1) : sy_plus1;
-        nsy_plus2 = nline ? (nnnframe ? 0 : sy_plus2 + 1) : sy_plus2;
+        if (nline) begin
+            nsx = 0;
+            nsy = (nframe ? 0 : sy + 1);
+            nsy_plus1 = (nnframe ? 0 : sy_plus1 + 1);
+            nsy_plus2 = (nnnframe ? 0 : sy_plus2 + 1);
+
+            if (sy == VA_END)
+                nvblank = 1;
+            else if (sy == SCREEN)
+                nvblank = 0;
+            else
+                nvblank = vblank;
+
+            if (sy == VS_STA)
+                nvsync = 0; // negative polarity
+            else if (sy == VS_END)
+                nvsync = 1;
+            else
+                nvsync = vsync;
+        end else begin
+            nsx = sx + 1;
+            nsy = sy;
+            nsy_plus1 = sy_plus1;
+            nsy_plus2 = sy_plus2;
+            nvblank = vblank;
+            nvsync = vsync;
+        end
+
+        if (sx == HA_END)
+            nhblank = 1;
+        else if (sx == LINE)
+            nhblank = 0;
+        else
+            nhblank = hblank;
+
+        if (sx == HS_STA)
+            nhsync = 1; // positive polarity
+        else if (sx == HS_END)
+            nhsync = 0;
+        else
+            nhsync = hsync;
+
+        nde = ~(nhblank | nvblank);
     end
 
     // register everything for speed
@@ -66,16 +108,21 @@ module vga #(parameter CORDW=11) (
             sy <= 0;
             sy_plus1 <= 1;
             sy_plus2 <= 2;
-            hsync <= 0;
-            vsync <= 0;
             de <= 0;
             line <= 0;
             frame <= 0;
+
+            hblank <= 0;
+            vblank <= 0;
+            hsync <= 1;
+            vsync <= 1;
         end else begin
             sx <= nsx;
             sy <= nsy;
             sy_plus1 <= nsy_plus1;
             sy_plus2 <= nsy_plus2;
+            hblank <= nhblank;
+            vblank <= nvblank;
             hsync <= nhsync;
             vsync <= nvsync;
             de <= nde;
