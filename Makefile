@@ -5,6 +5,7 @@ SRCS = rtl/vdp.sv rtl/vga.sv rtl/hdmi.sv \
        rtl/linebuffer_bram.sv rtl/double_buffer.sv rtl/pixel_doubler.sv \
        rtl/tile_map_bram.sv rtl/tile_bram.sv rtl/shift_aligner.sv \
        rtl/sprite_bram.sv rtl/active_bram.sv rtl/sprite_matcher.sv \
+       rtl/sprite_controller.sv \
        rtl/smoldvi.v rtl/smoldvi_clock_driver.v rtl/smoldvi_fast_gearbox.v \
        rtl/smoldvi_serialiser.v rtl/smoldvi_tmds_encode.v rtl/tmds_encoder.sv \
        rtl/fpgacpu_ca/cdc_bit_synchronizer.sv rtl/fpgacpu_ca/pulse_generator.sv \

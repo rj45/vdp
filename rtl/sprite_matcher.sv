@@ -15,7 +15,8 @@ module sprite_matcher (
     input  logic [8:0]           sprite_index,
     output logic                 valid,
     output active_tilemap_addr_t tilemap_addr,
-    output active_bitmap_addr_t  bitmap_addr
+    output active_bitmap_addr_t  bitmap_addr,
+    output logic [8:0]           sprite_count
 );
     parameter FILENAME = "sprites.hex";
 
@@ -76,7 +77,7 @@ module sprite_matcher (
     logic sprite_y_match;
     assign sprite_y_match = (screen_sy >= {1'b0, sprite_y_height.screen_y}) && (screen_sy < sprite_last_y);
 
-    assign sprite_match = enable && sprite_valid && sprite_y_match;
+    assign sprite_match = enable && sprite_valid && (scan_index < 9'h1ff) && sprite_y_match;
 
     logic [12:0] sprite_line_y;
     assign sprite_line_y = screen_sy - {1'b0, sprite_y_height.screen_y};
@@ -100,13 +101,14 @@ module sprite_matcher (
     assign match_tilemap_addr.x_flip = sprite_x_width.x_flip;
     assign match_tilemap_addr.tile_count = sprite_x_width.width;
     assign match_tilemap_addr.tilemap_addr = {sprite_addr.tilemap_addr, 9'd0} +
-        tilemap_offset_y;
+        tilemap_offset_y + {19'd0,sprite_x_width.tilemap_x};
 
     assign match_bitmap_addr.unused = 6'd0;
     assign match_bitmap_addr.lb_addr = sprite_x_width.screen_x;
     assign match_bitmap_addr.tile_bitmap_addr = sprite_addr.tile_bitmap_addr + tile_row;
 
     assign next_valid = sprite_index < p1_active_count;
+    assign sprite_count = p1_active_count - 1; // FIXME: why is this off by one?
 
     always_ff @(posedge clk_draw) begin
         if (line) begin

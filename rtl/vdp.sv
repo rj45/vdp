@@ -78,7 +78,9 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     //////////////////////////////////////////////////////////////////////
 
     logic             x0_line;
+    // verilator lint_off UNUSEDSIGNAL
     logic             x0_frame;
+    // verilator lint_on UNUSEDSIGNAL
     logic [CORDW-1:0] x0_sx;
     logic [CORDW-1:0] x0_sy;
     // verilator lint_off UNUSEDSIGNAL
@@ -117,19 +119,6 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         .receiving_pulse_out(d0_line)
     );
 
-    // CDC of frame from pix clock to draw clock
-    logic d0_frame;
-    cdc_pulse_synchronizer_2phase frame_cdc (
-        .sending_clock(clk_pix),
-        .sending_pulse_in(x0_frame),
-        // verilator lint_off PINCONNECTEMPTY
-        // .sending_ready(),
-        // verilator lint_on PINCONNECTEMPTY
-
-        .receiving_clock(clk_draw),
-        .receiving_pulse_out(d0_frame)
-    );
-
     // CDC from pix clock to draw clock -- part 1
     // this isn't entirely required, since d0_line is already synchronized
     // and y should be stable by the time the pulse goes through CDC
@@ -161,34 +150,15 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     // Draw cycle d1: Calculate addresses
     //////////////////////////////////////////////////////////////////////
 
-    logic [11:0]      d1_frame_counter;
-    logic [8:0]       d1_sprite_index;
-    logic             d1_sprite_done;
-    logic             d1_sprite_loading;
-    logic             d1_sprite_loaded;
-
     logic [CORDW-1:0] d1_sy_plus2;
     logic             d1_line;
     logic             d1_bufsel;
 
+
     always_ff @(posedge clk_draw) begin
-        if (d0_frame) d1_frame_counter <= d1_frame_counter + 1;
-
-        if (d0_line) begin
-            d1_sprite_index <= 9'h0;
-        end else begin
-            if (d1_sprite_done && d1_sprite_index < 9'h1ff) begin
-                d1_sprite_index <= d1_sprite_index + 1;
-                d1_sprite_loading <= 1'b1;
-            end else begin
-                d1_sprite_loading <= 1'b0;
-            end
-        end
-
         d1_line <= d0_line;
         d1_bufsel <= d0_bufsel;
         d1_sy_plus2 <= d0_sy_plus2;
-        d1_sprite_loaded <= d1_sprite_loading;
     end
 
     //////////////////////////////////////////////////////////////////////
@@ -196,13 +166,16 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     //////////////////////////////////////////////////////////////////////
 
     logic [11:0]          d2_lb_x;
-    logic [11:0]          d2_sprite_x;
+    logic [10:0]          d2_sprite_x;
+    logic [8:0]           d2_sprite_index;
 
+    logic                 d2_sprite_ready;
     logic                 d2_sprite_valid;
     // verilator lint_off UNUSEDSIGNAL
     active_tilemap_addr_t d2_tilemap_addr;
     active_bitmap_addr_t  d2_bitmap_addr;
     // verilator lint_on UNUSEDSIGNAL
+    logic [8:0]           d2_sprite_count;
 
     logic                 d2_line;
     logic                 d2_bufsel;
@@ -213,38 +186,32 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         .enable(1'b1), // TODO: hook this to ~vblank
         .line(d1_line),
         .sy_plus2(d1_sy_plus2),
-        .sprite_index(d1_sprite_index),
+        .sprite_index(d2_sprite_index),
 
-        .valid(d2_sprite_valid),
+        .valid(d2_sprite_ready),
         .tilemap_addr(d2_tilemap_addr),
-        .bitmap_addr(d2_bitmap_addr)
+        .bitmap_addr(d2_bitmap_addr),
+        .sprite_count(d2_sprite_count)
+    );
+
+    sprite_controller sprite_controller_inst (
+        .clk(clk_draw),
+        .rst(rst_draw),
+        .line(d1_line),
+
+        .sprite_count(d2_sprite_count),
+        .lb_addr(d2_bitmap_addr.lb_addr),
+        .sprite_width(d2_tilemap_addr.tile_count),
+
+        .sprite_ready(d2_sprite_ready),
+        .sprite_valid(d2_sprite_valid),
+
+        .sprite_index(d2_sprite_index),
+        .lb_x(d2_lb_x),
+        .sprite_x(d2_sprite_x)
     );
 
     always_ff @(posedge clk_draw) begin
-        if (d1_line) begin
-            d2_sprite_x <= 0;
-            d2_lb_x <= 12'hfff; // draw off screen for this cycle while sprite loads
-            d1_sprite_done <= 1'b0;
-        end else if (d2_line) begin // delayed by a clock to allow d2_bitmap_addr to load
-            d2_sprite_x <= 0;
-            d2_lb_x <= d2_bitmap_addr.lb_addr;
-            d1_sprite_done <= 1'b0;
-        end else if (d1_sprite_loaded) begin
-            d1_sprite_done <= 1'b0;
-            d2_sprite_x <= 0;
-            d2_lb_x <= d2_bitmap_addr.lb_addr;
-        end else if (d2_sprite_valid && d1_sprite_index < 9'h1ff && d2_sprite_x == {3'd0, d2_tilemap_addr.tile_count, 1'd0}) begin
-            d1_sprite_done <= 1'b1;
-            d2_sprite_x <= 0;
-            d2_lb_x <= 12'hfe0; // draw off screen
-        end else if (d2_sprite_valid) begin
-            d1_sprite_done <= 1'b0;
-            d2_sprite_x <= d2_sprite_x + 1;
-            d2_lb_x <= d2_lb_x + 8;
-        end else begin
-            d1_sprite_done <= 1'b0;
-        end
-
         d2_line <= d1_line;
         d2_bufsel <= d1_bufsel;
     end
@@ -259,6 +226,9 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     // verilator lint_on UNUSEDSIGNAL
     logic         d3_line;
     logic         d3_bufsel;
+    logic         d3_tile_half;
+    logic [13:0]  d3_tile_bitmap_addr;
+    logic         d3_sprite_valid;
 
     tile_map_bram #("tile_map.hex") tile_map_inst (
         .clk_draw(clk_draw),
@@ -269,9 +239,12 @@ module vdp #(parameter CORDW=11) ( // coordinate width
     );
 
     always_ff @(posedge clk_draw) begin
+        d3_tile_half <= d2_sprite_x[0];
         d3_lb_x <= d2_lb_x;
         d3_line <= d2_line;
         d3_bufsel <= d2_bufsel;
+        d3_tile_bitmap_addr <= d2_bitmap_addr.tile_bitmap_addr[13:0];
+        d3_sprite_valid <= d2_sprite_valid;
     end
 
     //////////////////////////////////////////////////////////////////////
@@ -280,7 +253,7 @@ module vdp #(parameter CORDW=11) ( // coordinate width
 
     logic [15:0]  d4_tile_data;
     logic [35:0]  d4_tile_pixels;
-    logic [3:0]   d4_tile_valid_mask = 4'b1111;
+    logic [3:0]   d4_tile_valid_mask;
     logic [11:0]  d4_lb_x;
     logic         d4_line;
     logic         d4_bufsel;
@@ -288,8 +261,8 @@ module vdp #(parameter CORDW=11) ( // coordinate width
 
     tile_bram #("tiles.hex") tile_inst (
         .clk_draw(clk_draw),
-        // FIXME: the ~d2_sprite_x[0] is a temporary hack to fix a timing issue elsewhere
-        .tile_addr(d2_bitmap_addr.tile_bitmap_addr[13:0] + {3'd0, d3_tilemap_data[9:0], 1'd0} + {13'd0, ~d2_sprite_x[0]}),
+
+        .tile_addr(d3_tile_bitmap_addr + {3'd0, d3_tilemap_data[9:0], d3_tile_half}),
 
         .tile_data(d4_tile_data)
     );
@@ -308,6 +281,7 @@ module vdp #(parameter CORDW=11) ( // coordinate width
         d4_line <= d3_line;
         d4_bufsel <= d3_bufsel;
         d4_palette_index <= d3_tilemap_data[14:10];
+        d4_tile_valid_mask <= {4{d3_sprite_valid}};
     end
 
 
