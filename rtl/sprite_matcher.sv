@@ -20,6 +20,8 @@ module sprite_matcher (
 );
     parameter FILENAME = "sprites.hex";
 
+    localparam INTITIAL_DELAY_FRAMES = 45;
+
     logic [9:0]       scan_index;
     // verilator lint_off UNUSEDSIGNAL
     sprite_y_height_t sprite_y_height;
@@ -153,7 +155,7 @@ module sprite_matcher (
     always_ff @(posedge clk_draw) begin
         if (sy_plus2 == 720) begin
             if (line) begin
-                if (initial_delay < 16'd900)
+                if (initial_delay < 16'(INTITIAL_DELAY_FRAMES))
                     initial_delay <= initial_delay + 16'd1;
                 else
                 write_index <= 10'd0;
@@ -161,7 +163,7 @@ module sprite_matcher (
                 write_index <= write_index + (w_enable ? 10'd1 : 10'd0);
             end
 
-            if (initial_delay == 16'd900) begin
+            if (initial_delay == 16'(INTITIAL_DELAY_FRAMES)) begin
                 w_enable <= sprite_valid;
                 w_sprite_y_height <= sprite_y_height;
                 w_sprite_y_height.screen_y <= {1'b0, y_plus_velocity[14:4]};
