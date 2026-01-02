@@ -39,6 +39,11 @@ typedef struct packed {
 } sprite_addr_t;
 
 typedef struct packed {
+    bit [17:0] x_velocity;
+    bit [17:0] y_velocity;
+} sprite_velocity_t;
+
+typedef struct packed {
     bit        x_flip;
     bit [7:0]  tile_count;
     bit [26:0] tilemap_addr;

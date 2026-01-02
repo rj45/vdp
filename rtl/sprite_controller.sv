@@ -78,8 +78,11 @@ module sprite_controller (
 
                 DRAWING: begin
                     if (sprite_x == sprite_end) begin
-                        lb_x <= OFF_SCREEN;
                         sprite_valid <= 1'b0;
+
+                        // flush the last pixels into the next lb address
+                        lb_x <= lb_x + 8;
+                        sprite_x <= sprite_x + 1;
 
                         if (index < sprite_count) begin
                             index <= index + 1;
