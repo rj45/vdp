@@ -22,6 +22,24 @@ module vga #(parameter CORDW=11) (
     output logic             frame     // reached end of frame
     );
 
+    `ifdef VERILATOR
+
+    /// In verilator we use reduced blanking for faster simulation
+
+    // horizontal timings (720p)
+    parameter HA_END = 1279;           // end of active pixels
+    parameter HS_STA = HA_END + 1;     // sync starts after front porch
+    parameter HS_END = HS_STA + 1;     // sync ends
+    parameter LINE   = 1283;           // last pixel on line (after back porch)
+
+    // vertical timings
+    parameter VA_END = 719;            // end of active pixels
+    parameter VS_STA = VA_END + 1;     // sync starts after front porch
+    parameter VS_END = VS_STA + 1;     // sync ends
+    parameter SCREEN = 722;            // last line on screen (after back porch)
+
+    `else
+
     // horizontal timings (720p)
     parameter HA_END = 1279;           // end of active pixels
     parameter HS_STA = HA_END + 48;    // sync starts after front porch
@@ -33,6 +51,8 @@ module vga #(parameter CORDW=11) (
     parameter VS_STA = VA_END + 3;     // sync starts after front porch
     parameter VS_END = VS_STA + 5;     // sync ends
     parameter SCREEN = 740;            // last line on screen (after back porch)
+
+    `endif
 
     logic [CORDW-1:0] nsx;
     logic [CORDW-1:0] nsy;

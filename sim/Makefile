@@ -2,7 +2,7 @@
 ## (C)2023 Will Green, open source hardware released under the MIT License
 ## Learn more at https://projectf.io/posts/fpga-graphics/
 
-VFLAGS = -O3 --x-assign fast --x-initial fast --noassert --threads 1
+VFLAGS = -O3 --x-assign fast --x-initial fast --noassert --threads 1 --compiler gcc
 SDL_CFLAGS = `sdl2-config --cflags`
 SDL_LDFLAGS = `sdl2-config --libs`
 
@@ -15,7 +15,7 @@ test: test.exe
 	cp ../rtl/*.hex .
 	verilator ${VFLAGS} -I../rtl -I../rtl/fpgacpu_ca \
 		-cc $< --exe main_$(basename $@).cpp sdram.cpp -o $(basename $@) \
-		-CFLAGS "${SDL_CFLAGS} -std=c++17 -march=native -O3 -flto" -LDFLAGS "${SDL_LDFLAGS} -flto"
+		-CFLAGS "${SDL_CFLAGS} -std=c++17 -march=native -fstrict-aliasing -O3 -flto" -LDFLAGS "${SDL_LDFLAGS} -flto"
 
 all: test
 
