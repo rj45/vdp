@@ -3,13 +3,11 @@
 //! This module handles the conversion of images to tiles, palettes, and tilemaps
 //! for use in graphics hardware or software.
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
 
 use image::{GenericImageView, Pixel, RgbImage};
-use pathfinding::kuhn_munkres::kuhn_munkres_min;
-use kmeans::{EuclideanDistance, KMeans, KMeansConfig};
+use kmeans::{KMeans, KMeansConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -34,10 +32,6 @@ const PALETTE_INDEX_SHIFT: usize = 10;
 const DELTA_E_DISPLAY_FACTOR: f32 = 100.0;
 /// Maximum pixel value for PSNR calculation (8-bit color)
 const MAX_PIXEL_VALUE: f32 = 255.0;
-/// Maximum number of color indices (2^BITS_PER_COLOR = 16 for 4-bit indices)
-const MAX_COLOR_INDICES: usize = 1 << BITS_PER_COLOR;
-/// Sentinel weight for forcing assignments in Hungarian algorithm (moderate to avoid overflow)
-const HUNGARIAN_FORCE_WEIGHT: i64 = 1_000_000_000;
 
 /// Errors that can occur during image conversion
 #[derive(Error, Debug)]
@@ -241,19 +235,6 @@ pub struct TileAssignment {
     pub palette_index: usize,
 }
 
-/// Information about a tile's canonical structure for palette optimization
-#[derive(Debug, Clone)]
-struct TileStructureInfo {
-    /// Index of this tile in the tilemap
-    #[allow(dead_code)]
-    tile_idx: usize,
-    /// Which palette this tile uses
-    palette_idx: usize,
-    /// Maps original color index -> canonical index (255 = unused)
-    /// Size is MAX_COLOR_INDICES (16 for 4-bit color indices)
-    original_to_canonical: [u8; MAX_COLOR_INDICES],
-}
-
 /// Extract unique colors from a tile into a color frequency list
 fn extract_colors(tile: &[Oklab], threshold: f32, colors: &mut Vec<ColorFrequency>) {
     for pixel in tile.iter() {
@@ -294,9 +275,6 @@ impl ImageConverter {
         let quantized_tiles =
             self.quantize_tiles(&raw_tiles, &palettes, &tile_palette_assignments)?;
 
-        // Optimize palette ordering to maximize tile reuse
-        let (palettes, quantized_tiles) = self.optimize_palette_ordering(&quantized_tiles, &palettes, &tile_palette_assignments);
-
         // Cluster quantized tiles to find unique representative tiles
         let unique_tiles =
             self.cluster_quantized_tiles(&quantized_tiles, &tile_palette_assignments, &palettes)?;
@@ -316,8 +294,8 @@ impl ImageConverter {
         let output_img =
             self.generate_output_image_from_assignments(&unique_tiles, &palettes, &tile_assignments)?;
 
-        // Create data for JSON output
-        let tilemap_data = self.create_tilemap_data(raw_tiles, palettes, &unique_tiles, &tile_assignments, tilemap);
+        // Create data for JSON output (using original quantized tiles for compatibility)
+        let tilemap_data = self.create_tilemap_data(raw_tiles, palettes, quantized_tiles, tilemap);
 
         // Write JSON if requested
         if let Some(json_path) = &self.config.output_json {
@@ -933,253 +911,6 @@ impl ImageConverter {
         }
     }
 
-    /// Compute the canonical structure of a quantized tile.
-    ///
-    /// The canonical form renumbers colors by order of first appearance:
-    /// - First unique color seen becomes 0
-    /// - Second unique color becomes 1
-    /// - etc.
-    ///
-    /// Returns (canonical_pattern, original_to_canonical_mapping)
-    fn compute_canonical_structure(quantized: &[u16]) -> (Vec<u8>, [u8; MAX_COLOR_INDICES]) {
-        let mut canonical = Vec::with_capacity(64); // 8x8 tile
-        let mut original_to_canonical = [255u8; MAX_COLOR_INDICES]; // 255 = unused
-        let mut next_canonical = 0u8;
-
-        for chunk in quantized.iter() {
-            for pixel_offset in 0..PIXELS_PER_CHUNK {
-                let original_idx = ((chunk >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
-
-                if original_to_canonical[original_idx] == 255 {
-                    original_to_canonical[original_idx] = next_canonical;
-                    next_canonical += 1;
-                }
-                canonical.push(original_to_canonical[original_idx]);
-            }
-        }
-
-        (canonical, original_to_canonical)
-    }
-
-    /// Optimize palette orderings to maximize tile reuse.
-    ///
-    /// This reorders colors within each palette so that tiles with similar
-    /// "structure" (same pattern of distinct colors) can share the same
-    /// quantized representation across different palettes.
-    fn optimize_palette_ordering(
-        &self,
-        quantized_tiles: &[Vec<u16>],
-        palettes: &[Palette],
-        tile_palette_assignments: &[usize],
-    ) -> (Vec<Palette>, Vec<Vec<u16>>) {
-        let num_palettes = palettes.len();
-        let colors_per_palette = self.config.colors_per_palette;
-
-        let mut current_palettes = palettes.to_vec();
-        let mut current_quantized = quantized_tiles.to_vec();
-
-        // Phase 1: Compute canonical structures and build feature vectors for k-means
-        let tile_size = self.config.tile_size(); // 64 for 8x8 tiles
-        let num_tiles = current_quantized.len();
-        let mut structure_features: Vec<f32> = Vec::with_capacity(num_tiles * tile_size);
-        let mut tile_infos: Vec<TileStructureInfo> = Vec::with_capacity(num_tiles);
-
-        for (tile_idx, quantized) in current_quantized.iter().enumerate() {
-            let (canonical, mapping) = Self::compute_canonical_structure(quantized);
-            let palette_idx = tile_palette_assignments[tile_idx];
-
-            // Add canonical pattern as features for k-means (64 floats per tile)
-            for &c in canonical.iter() {
-                structure_features.push(c as f32);
-            }
-
-            tile_infos.push(TileStructureInfo {
-                tile_idx,
-                palette_idx,
-                original_to_canonical: mapping,
-            });
-        }
-
-        // Phase 2: K-means clustering of structures into fuzzy groups
-        let target_clusters = self.config.max_unique_tiles.min(num_tiles);
-
-        let kmean: KMeans<_, 8, _> = KMeans::new(
-            structure_features,
-            num_tiles,
-            tile_size,
-            EuclideanDistance,
-        );
-
-        let result = kmean.kmeans_lloyd(
-            target_clusters,
-            KMEANS_MAX_ITERATIONS,
-            KMeans::init_kmeanplusplus,
-            &KMeansConfig::default(),
-        );
-
-        // Build groups from cluster assignments
-        let mut structure_groups: Vec<Vec<TileStructureInfo>> = vec![Vec::new(); target_clusters];
-        for (i, info) in tile_infos.into_iter().enumerate() {
-            let cluster_id = result.assignments[i];
-            structure_groups[cluster_id].push(info);
-        }
-
-        // Count groups with potential for sharing (size >= 2)
-        let sharing_groups: usize = structure_groups.iter().filter(|g| g.len() >= 2).count();
-        let total_shareable_tiles: usize = structure_groups
-            .iter()
-            .filter(|g| g.len() >= 2)
-            .map(|g| g.len())
-            .sum();
-
-        println!(
-            "Fuzzy structure clustering: {} clusters with sharing potential ({} tiles)",
-            sharing_groups,
-            total_shareable_tiles
-        );
-
-        // Phase 3: Vote for palette color->slot assignments
-        // votes[palette_idx][(original_color, target_slot)] = weight
-        let mut votes: Vec<HashMap<(usize, usize), i64>> = vec![HashMap::new(); num_palettes];
-
-        for tiles in structure_groups.iter() {
-            if tiles.len() < 2 {
-                continue; // No sharing benefit for singleton groups
-            }
-
-            let group_weight = (tiles.len() * tiles.len()) as i64; // Quadratic weight
-
-            for info in tiles {
-                for (original_idx, &canonical_idx) in
-                    info.original_to_canonical.iter().enumerate()
-                {
-                    if canonical_idx != 255 {
-                        *votes[info.palette_idx]
-                            .entry((original_idx, canonical_idx as usize))
-                            .or_insert(0) += group_weight;
-                    }
-                }
-            }
-        }
-
-        // Phase 4: Solve optimal assignment for each palette using Hungarian algorithm
-        let mut permutations: Vec<Vec<usize>> = Vec::with_capacity(num_palettes);
-
-        for palette_idx in 0..num_palettes {
-            // Build weight matrix (we want to maximize, so negate for min algorithm)
-            // Matrix is colors_per_palette x colors_per_palette
-            let mut weights = pathfinding::matrix::Matrix::new(
-                colors_per_palette,
-                colors_per_palette,
-                0i64,
-            );
-
-            for (&(orig, slot), &weight) in votes[palette_idx].iter() {
-                if orig < colors_per_palette && slot < colors_per_palette {
-                    weights[(orig, slot)] = -weight; // Negate for minimization
-                }
-            }
-
-            // Special constraint: Palette 0, slot 0 must be black
-            if palette_idx == 0 && !current_palettes[0].colors.is_empty() {
-                // Find the black color (or darkest color) in this palette
-                let black_idx = current_palettes[0]
-                    .colors
-                    .iter()
-                    .enumerate()
-                    .min_by(|(_, a), (_, b)| {
-                        a.color.l.partial_cmp(&b.color.l).unwrap()
-                    })
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-
-                // Force black to slot 0 with moderate weights (avoid overflow)
-                for slot in 0..colors_per_palette {
-                    weights[(black_idx, slot)] = HUNGARIAN_FORCE_WEIGHT;
-                }
-                weights[(black_idx, 0)] = -HUNGARIAN_FORCE_WEIGHT;
-
-                for orig in 0..colors_per_palette {
-                    if orig != black_idx {
-                        weights[(orig, 0)] = HUNGARIAN_FORCE_WEIGHT;
-                    }
-                }
-            }
-
-            // Solve assignment problem
-            let (_, assignment) = kuhn_munkres_min(&weights);
-
-            // assignment[slot] = which original color goes to this slot
-            // We need the inverse: for each original, which slot does it go to
-            // Use MAX_COLOR_INDICES to handle all possible 4-bit indices
-            let mut inverse_perm = vec![0usize; MAX_COLOR_INDICES];
-            // Initialize with identity mapping for safety
-            for i in 0..MAX_COLOR_INDICES {
-                inverse_perm[i] = i;
-            }
-            for (slot, &orig) in assignment.iter().enumerate() {
-                if orig < MAX_COLOR_INDICES {
-                    inverse_perm[orig] = slot;
-                }
-            }
-
-            permutations.push(inverse_perm);
-        }
-
-        // Phase 5: Apply permutations to palettes and quantized tiles
-        let mut new_palettes = Vec::with_capacity(num_palettes);
-        for (palette_idx, palette) in current_palettes.iter().enumerate() {
-            let perm = &permutations[palette_idx];
-            let mut new_colors = vec![ColorFrequency::default(); colors_per_palette];
-
-            for (orig_idx, color) in palette.colors.iter().enumerate() {
-                let new_slot = perm[orig_idx];
-                new_colors[new_slot] = *color;
-            }
-
-            new_palettes.push(Palette { colors: new_colors });
-        }
-
-        // Update quantized tiles with new indices
-        let mut new_quantized = Vec::with_capacity(current_quantized.len());
-        for (tile_idx, quantized) in current_quantized.iter().enumerate() {
-            let palette_idx = tile_palette_assignments[tile_idx];
-            let perm = &permutations[palette_idx];
-
-            let mut new_tile = vec![0u16; quantized.len()];
-            for (chunk_idx, &chunk) in quantized.iter().enumerate() {
-                let mut new_chunk = 0u16;
-                for pixel_offset in 0..PIXELS_PER_CHUNK {
-                    let original_idx =
-                        ((chunk >> (pixel_offset * BITS_PER_COLOR)) & 0xF) as usize;
-                    let new_idx = perm[original_idx] as u16;
-                    new_chunk |= new_idx << (pixel_offset * BITS_PER_COLOR);
-                }
-                new_tile[chunk_idx] = new_chunk;
-            }
-            new_quantized.push(new_tile);
-        }
-
-        current_palettes = new_palettes;
-        current_quantized = new_quantized;
-
-
-        // Report final unique structure count
-        let mut final_structures: HashMap<Vec<u8>, usize> = HashMap::new();
-        for quantized in current_quantized.iter() {
-            let (canonical, _) = Self::compute_canonical_structure(quantized);
-            *final_structures.entry(canonical).or_insert(0) += 1;
-        }
-        let unique_after = final_structures.len();
-        println!(
-            "After optimization: {} unique structures (was {} tiles)",
-            unique_after,
-            current_quantized.len()
-        );
-
-        (current_palettes, current_quantized)
-    }
-
     /// Generate tilemap from tile assignments (with unique tile indices)
     fn generate_tilemap_from_assignments(&self, tile_assignments: &[TileAssignment]) -> Vec<u16> {
         tile_assignments
@@ -1431,15 +1162,14 @@ impl ImageConverter {
         &self,
         raw_tiles: Vec<Vec<Oklab>>,
         palettes: Vec<Palette>,
-        unique_tiles: &[UniqueTile],
-        tile_assignments: &[TileAssignment],
+        quantized_tiles: Vec<Vec<u16>>,
         tilemap: Vec<u16>,
     ) -> TilemapData {
         // Create tiles with both raw and quantized data
         let tiles: Vec<Tile> = raw_tiles
             .into_iter()
-            .zip(tile_assignments)
-            .map(|(pixels, assignment)| Tile { pixels, quantized: unique_tiles[assignment.unique_tile_index].quantized.clone() })
+            .zip(quantized_tiles)
+            .map(|(pixels, quantized)| Tile { pixels, quantized })
             .collect();
 
         // Create tilemap entries
