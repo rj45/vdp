@@ -48,7 +48,7 @@ module pixel_doubler (
     // concat the previous pixels with the new pixels so that the `shift_aligner`
     // module has all the pixels necessary to to write up to 8 pixels per cycle
     // into the line buffer
-    always_ff @(posedge clk_draw) begin
+    always_ff @(posedge clk_draw or posedge rst_draw) begin
         if (rst_draw) begin
             lb_addr <= 9'h0;
             unaligned_pixels <= 144'h0;

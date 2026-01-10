@@ -30,7 +30,7 @@ module shift_aligner (
         endcase
     end
 
-    always_ff @(posedge clk_draw) begin
+    always_ff @(posedge clk_draw or posedge rst_draw) begin
         if (rst_draw) begin
             aligned_pixels <= 72'h0;
             aligned_valid_mask <= 8'h0;

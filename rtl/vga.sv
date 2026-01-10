@@ -128,13 +128,13 @@ module vga #(parameter CORDW=11) (
             sy <= 0;
             sy_plus1 <= 1;
             sy_plus2 <= 2;
-            de <= 0;
+            de <= 1;
             line <= 0;
             frame <= 0;
 
             hblank <= 0;
             vblank <= 0;
-            hsync <= 1;
+            hsync <= 0;
             vsync <= 1;
         end else begin
             sx <= nsx;

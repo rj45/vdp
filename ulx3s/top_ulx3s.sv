@@ -56,32 +56,37 @@ module top_ulx3s  (
         .locked
     );
 
-    logic btn_reset = ~btn[0];
+    logic initial_rst_signal = ~locked || ~btn[0];
 
-    // reset -- TODO: make more robust
-    logic nnrst_pix;
-    always_ff @(posedge clk_pix) nnrst_pix <= ~locked || btn_reset;
+    logic [12:0] rst_counter;
+    logic reset = 1'b1;
+    always_ff @(posedge clk_draw or posedge initial_rst_signal) begin
+        if (initial_rst_signal) begin
+            rst_counter <= 13'h1fff;
+            reset <= 1'b1;
+        end else if (rst_counter != 0)
+            rst_counter <= rst_counter - 1;
+        else if (rst_counter == 0)
+            reset <= 1'b0;
+    end
 
-    logic nrst_pix;
-    always_ff @(posedge clk_pix) nrst_pix <= nnrst_pix;
+    logic rst_draw = 1'b1;
+    always_ff @(posedge clk_draw or posedge reset) begin
+        if (reset) rst_draw <= 1'b1;
+        else       rst_draw <= reset;
+    end
 
-    logic rst_pix;
-    always_ff @(posedge clk_pix) rst_pix <= nrst_pix;
+    logic rst_pix = 1'b1;
+    always_ff @(posedge clk_draw or posedge reset) begin
+        if (reset) rst_pix <= 1'b1;
+        else       rst_pix <= reset;
+    end
 
-    logic nnrst_pix5x;
-    always_ff @(posedge clk_pix5x) nnrst_pix5x <= ~locked || btn_reset;
-
-    logic nrst_pix5x;
-    always_ff @(posedge clk_pix5x) nrst_pix5x <= nnrst_pix5x;
-
-    logic rst_pix5x;
-    always_ff @(posedge clk_pix5x) rst_pix5x <= nrst_pix5x;
-
-    logic nrst_draw;
-    always_ff @(posedge clk_draw) nrst_draw <= ~locked || btn_reset;
-
-    logic rst_draw;
-    always_ff @(posedge clk_draw) rst_draw <= nrst_draw;
+    logic rst_pix5x = 1'b1;
+    always_ff @(posedge clk_draw or posedge reset) begin
+        if (reset) rst_pix5x <= 1'b1;
+        else       rst_pix5x <= reset;
+    end
 
     logic hsync, vsync, de;
     logic [7:0] r, g, b;
