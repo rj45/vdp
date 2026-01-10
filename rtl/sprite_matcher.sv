@@ -20,7 +20,11 @@ module sprite_matcher (
 );
     parameter FILENAME = "sprites.hex";
 
+`ifdef VERILATOR
     localparam INTITIAL_DELAY_FRAMES = 45;
+`else
+    localparam INTITIAL_DELAY_FRAMES = 480;
+`endif
 
     logic [9:0]       scan_index;
     // verilator lint_off UNUSEDSIGNAL
