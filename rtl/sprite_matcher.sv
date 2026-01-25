@@ -33,8 +33,8 @@ module sprite_matcher (
     sprite_addr_t     sprite_addr;
     sprite_velocity_t sprite_velocity;
 
-    sprite_y_height_t w_sprite_y_height = '0;
-    sprite_x_width_t  w_sprite_x_width = '0;
+    sprite_y_height_t w_sprite_y_height;
+    sprite_x_width_t  w_sprite_x_width;
     // verilator lint_on UNUSEDSIGNAL
 
     logic [9:0]       write_index;
@@ -84,40 +84,40 @@ module sprite_matcher (
         .read_bitmap_addr(bitmap_addr)
     );
 
-    // pad the screen y coord to 13 bits
-    logic [12:0] screen_sy;
-    assign screen_sy = {2'b0, sy_plus2};
+    // pad the screen y coord to 12 bits
+    logic [11:0] screen_sy;
+    assign screen_sy = {1'b0, sy_plus2};
 
     // a tile is 16 pixels tall with pixel doubling so the height is
     // shifted left by 4 bits.
-    logic [12:0] sprite_height;
-    assign sprite_height = {1'b0, sprite_y_height.height, 4'b0};
+    logic [11:0] sprite_height;
+    assign sprite_height = {sprite_y_height.height, 4'b0};
 
     // determine the last y coord on screen for the sprite
-    logic [12:0] sprite_last_y;
-    assign sprite_last_y = {1'b0, sprite_y_height.screen_y} + sprite_height;
+    logic [11:0] sprite_last_y;
+    assign sprite_last_y = sprite_y_height.screen_y + sprite_height;
 
     // check if the current line is between the min and max y coord of the sprite
     logic sprite_y_match;
-    assign sprite_y_match = (screen_sy >= {1'b0, sprite_y_height.screen_y}) && (screen_sy < sprite_last_y);
+    assign sprite_y_match = ($signed(screen_sy) >= $signed(sprite_y_height.screen_y)) && ($signed(screen_sy) < $signed(sprite_last_y));
 
     assign sprite_match = enable && sprite_valid  && sprite_y_match;
 
-    logic [12:0] sprite_line_y;
-    assign sprite_line_y = screen_sy - {1'b0, sprite_y_height.screen_y};
+    logic [11:0] sprite_line_y;
+    assign sprite_line_y = screen_sy - sprite_y_height.screen_y;
 
-    logic [12:0] sprite_offset_y;
+    logic [11:0] sprite_offset_y;
     assign sprite_offset_y = (sprite_x_width.y_flip) ?
-        (sprite_height - 13'd1 - sprite_line_y) :
+        (sprite_height - 12'd1 - sprite_line_y) :
         sprite_line_y;
 
-    logic [12:0] sprite_tilemap_y;
-    assign sprite_tilemap_y = (sprite_offset_y >> 4) + {4'd0, sprite_y_height.tilemap_y};
+    logic [11:0] sprite_tilemap_y;
+    assign sprite_tilemap_y = (sprite_offset_y >> 4) + {3'd0, sprite_y_height.tilemap_y};
 
     logic [26:0] tilemap_offset_y;
     assign tilemap_offset_y =
-        ({14'd0, sprite_tilemap_y} << (sprite_y_height.tilemap_size_a + 4)) +
-        ({14'd0, sprite_tilemap_y} << (sprite_y_height.tilemap_size_b + 4));
+        ({15'd0, sprite_tilemap_y} << (sprite_y_height.tilemap_size_a + 4)) +
+        ({15'd0, sprite_tilemap_y} << (sprite_y_height.tilemap_size_b + 4));
 
     logic [17:0] tile_row;
     assign tile_row = { 6'd0, sprite_offset_y[3:1], 9'd0 };

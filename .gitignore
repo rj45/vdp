@@ -1,6 +1,7 @@
 bin/
 sim/obj_dir
 sim/*.hex
+sim/*.bin
 imgconv/target/*
 .DS_Store
 target/

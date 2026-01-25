@@ -28,7 +28,7 @@ module top_ulx3s  (
     // HDMI -- `gpdi_dn` are handled by the constraints as differential pairs
     output      logic [3:0]  gpdi_dp,
 
-    output      logic [7:0]  led
+    output      logic [7:0]  led,
     );
 
     // these aren't used as the gdpi_dp outputs are marked as differential pairs in the constraints
